@@ -24,7 +24,7 @@ I take the security of `qbit-gluetun-sync` seriously. If you discover a security
    - Potential impact.
    - Suggested mitigations (if any).
 
-I will try to acknowledge your report within 48 hours and provide an estimated timeline for addressing the issue. I will keep you updated on the progress and notify you when the fix is released.
+I aim to acknowledge your report within 48 hours and provide an estimated timeline for addressing the issue. I will keep you updated on the progress and notify you when the fix is released.
 
 ## Security Best Practices
 
