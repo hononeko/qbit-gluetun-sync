@@ -7,5 +7,8 @@ on:
 jobs:
   validate:
     uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+      packages: read
     with:
       image_tag: pr-test
