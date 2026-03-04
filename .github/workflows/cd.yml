@@ -37,6 +37,7 @@ jobs:
         with:
           change_path: "."
           bump_each_commit: false
+          tag_prefix: ""
           major_pattern: "/!:|BREAKING CHANGE:/"
           minor_pattern: "/feat(\\(.+\\))?:/"
           version_format: "${major}.${minor}.${patch}"
@@ -69,6 +70,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v4
@@ -80,7 +82,7 @@ jobs:
       - name: Generate Changelog
         if: steps.version.outputs.version_tag
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
           if [ -z "$PREV_TAG" ]; then
             git log --pretty=format:"* %s (%h)" > changelog.txt
           else
