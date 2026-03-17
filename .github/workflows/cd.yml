@@ -33,7 +33,7 @@ jobs:
 
       - name: Calculate Semantic Version
         id: version
-        uses: PaulHatch/semantic-version@v6.0.1
+        uses: PaulHatch/semantic-version@v6.0.2
         with:
           change_path: "."
           bump_each_commit: false
