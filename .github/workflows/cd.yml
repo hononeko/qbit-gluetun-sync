@@ -94,8 +94,8 @@ jobs:
           labels: ${{ steps.meta_wasm.outputs.labels }}
           cache-from: type=gha,scope=wasm
           cache-to: type=gha,mode=max,scope=wasm
-          provenance: mode=max
-          sbom: true
+          provenance: false
+          sbom: false
 
       - name: Generate Changelog
         if: steps.version.outputs.version_tag
