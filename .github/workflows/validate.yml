@@ -61,6 +61,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build WASM Docker image (Try)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.wasm
+          platforms: wasip1/wasm
+          push: false
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}-wasm
+          cache-from: type=gha,scope=wasm
+          cache-to: type=gha,mode=max,scope=wasm
+
       # - name: Run Trivy vulnerability scanner
       #   uses: aquasecurity/trivy-action@0.35.0
       #   with:
