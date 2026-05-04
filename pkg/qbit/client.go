@@ -104,6 +104,7 @@ func (c *Client) SetPreferences(preferences map[string]interface{}) error {
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
 	if cookie != "" {
+		//nolint:gosec // Cookie is used for client request, not server response
 		req.AddCookie(&http.Cookie{Name: "SID", Value: cookie})
 	}
 

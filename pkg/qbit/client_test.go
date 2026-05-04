@@ -16,6 +16,7 @@ func TestClient_SetListenPort(t *testing.T) {
 			// Read body to verify
 			body, _ := io.ReadAll(r.Body)
 			if strings.Contains(string(body), "username=admin") && strings.Contains(string(body), "password=adminadmin") {
+				//nolint:gosec // Mock server for testing
 				http.SetCookie(w, &http.Cookie{Name: "SID", Value: "test-cookie"})
 				w.WriteHeader(http.StatusOK)
 				return
