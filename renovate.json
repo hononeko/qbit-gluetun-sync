@@ -2,7 +2,9 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended",
-    "mergeConfidence:all-badges"
+    "mergeConfidence:all-badges",
+    ":semanticCommits",
+    "helpers:pinGitHubActionDigests"
   ],
   "packageRules": [
     {
