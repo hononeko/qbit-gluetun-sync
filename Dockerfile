@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # -- Stage 1: Downloader
-FROM alpine:3.23 AS downloader
+FROM alpine:3.24 AS downloader
 RUN apk add --no-cache ca-certificates tzdata
 
 # -- Stage 2: Builder
