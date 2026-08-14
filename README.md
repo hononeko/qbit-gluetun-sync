@@ -4,7 +4,7 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/hononeko/qbit-gluetun-sync/main.yml)](https://github.com/hononeko/qbit-gluetun-sync/actions/workflows/main.yml)
 [![Docker Image](https://img.shields.io/badge/Image-hononeko/qbit--gluetun--sync-blue?logo=docker)](https://github.com/hononeko/qbit-gluetun-sync/pkgs/container/qbit-gluetun-sync)
 
-A lightweight, resilient, and event-driven sidecar written in Go to synchronize the dynamic forwarded port from Gluetun (ProtonVPN) to qBitTorrent.
+A lightweight, resilient, and secure sidecar written in Go to synchronize the dynamic forwarded port from Gluetun (ProtonVPN) to qBitTorrent.
 
 ## Introduction
 
@@ -15,23 +15,29 @@ Instead of relying on heavy polling shell scripts, this project provides a **Go-
 - **Resilient File Watching:** Watches the `/tmp/gluetun/forwarded_port` file using `fsnotify` for instant updates. Automatically detects delayed directory creation and handles volume remounts gracefully.
 - **Self-Healing Reconciliation:** Runs a periodic reconciliation loop (`SYNC_INTERVAL`) to ensure qBitTorrent stays synchronized even after container reboots or network blips.
 - **qBitTorrent API Sync:** Automatically calls `/api/v2/app/setPreferences` to update the listening port whenever Gluetun assigns a new one.
+- **Secret Management & File Mounts:** Supports secret files (`QBIT_PASS_FILE`, `QBIT_USER_FILE`) for Docker Secrets and Kubernetes Secrets integration.
+- **Hardened Container Security:** Runs as unprivileged `nonroot` inside Google's minimal `distroless/static-debian12` image (zero C shared library footprint).
 - **Graceful Lifecycle Management:** Traps `SIGINT`/`SIGTERM` to perform clean draining and termination.
-- **Container Hardening:** Runs as unprivileged `nonroot` inside a minimal Google `distroless` image.
 - **Health Probing:** Exposes `/healthz` for Kubernetes and Docker liveness checks.
 
 ## Configuration
 
 The application is configured using Environment Variables:
 
-| Variable        | Default                       | Description                                                         |
-| :-------------- | :---------------------------- | :------------------------------------------------------------------ |
-| `QBIT_ADDR`     | `http://localhost:8080`       | The address of your qBitTorrent Web UI.                             |
-| `QBIT_USER`     | _(empty)_                     | Username for qBitTorrent (if authentication is required).           |
-| `QBIT_PASS`     | _(empty)_                     | Password for qBitTorrent.                                           |
-| `PORT_FILE`     | `/tmp/gluetun/forwarded_port` | Path to the port file written by Gluetun.                           |
-| `LISTEN_PORT`   | `9090`                        | The port this sidecar listens on for health checks.                 |
-| `SYNC_INTERVAL` | `10m`                         | Periodic reconciliation interval (e.g., `5m`, `10m`, `0` to disable).|
-| `LOG_LEVEL`     | `info`                        | Log verbosity (`debug`, `info`, `warn`, `error`).                   |
+| Variable                     | Default                       | Description                                                                  |
+| :--------------------------- | :---------------------------- | :--------------------------------------------------------------------------- |
+| `QBIT_ADDR`                  | `http://localhost:8080`       | The address of your qBitTorrent Web UI.                                      |
+| `QBIT_USER`                  | _(empty)_                     | Username for qBitTorrent.                                                    |
+| `QBIT_USER_FILE`             | _(empty)_                     | Path to file containing qBitTorrent username (takes precedence over `QBIT_USER`).|
+| `QBIT_PASS`                  | _(empty)_                     | Password for qBitTorrent.                                                    |
+| `QBIT_PASS_FILE`             | _(empty)_                     | Path to file containing qBitTorrent password (takes precedence over `QBIT_PASS`).|
+| `QBIT_INSECURE_SKIP_VERIFY`  | `false`                       | Skip TLS certificate verification for self-signed HTTPS endpoints.           |
+| `QBIT_CA_CERT_FILE`          | _(empty)_                     | Path to custom CA certificate PEM file for verifying HTTPS endpoints.       |
+| `PORT_FILE`                  | `/tmp/gluetun/forwarded_port` | Path to the port file written by Gluetun.                                    |
+| `LISTEN_ADDR`                | _(empty)_                     | Bind IP address for healthcheck server (e.g. `127.0.0.1` or `0.0.0.0`).      |
+| `LISTEN_PORT`                | `9090`                        | The port this sidecar listens on for health checks.                          |
+| `SYNC_INTERVAL`              | `10m`                         | Periodic reconciliation interval (e.g., `5m`, `10m`, `0` to disable).         |
+| `LOG_LEVEL`                  | `info`                        | Log verbosity (`debug`, `info`, `warn`, `error`).                            |
 
 ## Usage
 
@@ -81,9 +87,9 @@ services:
       - gluetun_data:/tmp/gluetun:ro
 ```
 
-### Kubernetes (Sidecar Pattern)
+### Kubernetes (Sidecar Pattern with Secrets)
 
-If deploying in Kubernetes, deploy inside the same Pod as qBitTorrent with an `emptyDir` volume shared with Gluetun.
+If deploying in Kubernetes, deploy inside the same Pod as qBitTorrent with an `emptyDir` volume shared with Gluetun and mounted Secrets.
 
 ```yaml
 apiVersion: apps/v1
@@ -113,12 +119,20 @@ spec:
         # 3. Sync Sidecar
         - name: qbit-sync
           image: ghcr.io/hononeko/qbit-gluetun-sync:latest
+          env:
+            - name: QBIT_ADDR
+              value: "http://localhost:8080"
+            - name: QBIT_PASS_FILE
+              value: "/etc/secrets/qbit/password"
           ports:
             - containerPort: 9090
               name: healthz
           volumeMounts:
             - name: gluetun-sync
               mountPath: /tmp/gluetun
+              readOnly: true
+            - name: qbit-secret
+              mountPath: /etc/secrets/qbit
               readOnly: true
           livenessProbe:
             httpGet:
@@ -127,6 +141,9 @@ spec:
       volumes:
         - name: gluetun-sync
           emptyDir: {}
+        - name: qbit-secret
+          secret:
+            secretName: qbit-credentials
 ```
 
 ## API Endpoints

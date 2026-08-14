@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -66,6 +65,35 @@ func TestGetEnv(t *testing.T) {
 	}
 }
 
+func TestGetSecret(t *testing.T) {
+	tempDir := t.TempDir()
+	secretFilePath := filepath.Join(tempDir, "pass_secret.txt")
+
+	if err := os.WriteFile(secretFilePath, []byte("super_secret_from_file\n"), 0600); err != nil {
+		t.Fatalf("failed to write secret file: %v", err)
+	}
+
+	_ = os.Setenv("TEST_PASS", "plain_password")
+	_ = os.Setenv("TEST_PASS_FILE", secretFilePath)
+	defer func() {
+		_ = os.Unsetenv("TEST_PASS")
+		_ = os.Unsetenv("TEST_PASS_FILE")
+	}()
+
+	// File secret must take precedence over env var
+	val := getSecret("TEST_PASS", "TEST_PASS_FILE", "fallback")
+	if val != "super_secret_from_file" {
+		t.Errorf("Expected super_secret_from_file from file, got %s", val)
+	}
+
+	// When file doesn't exist, should fall back to env var
+	_ = os.Setenv("TEST_PASS_FILE", filepath.Join(tempDir, "non_existent.txt"))
+	valFallback := getSecret("TEST_PASS", "TEST_PASS_FILE", "fallback")
+	if valFallback != "plain_password" {
+		t.Errorf("Expected plain_password from env fallback, got %s", valFallback)
+	}
+}
+
 func TestReconciliationLoop(t *testing.T) {
 	tempDir := t.TempDir()
 	portFile := filepath.Join(tempDir, "forwarded_port")
@@ -77,20 +105,21 @@ func TestReconciliationLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var triggerCount int32
+	triggerCh := make(chan struct{}, 5)
 	syncFunc := func(port int) {
 		if port == 44444 {
-			atomic.AddInt32(&triggerCount, 1)
+			triggerCh <- struct{}{}
 		}
 	}
 
-	go runReconciliationLoop(ctx, portFile, syncFunc, 50*time.Millisecond)
+	go runReconciliationLoop(ctx, portFile, syncFunc, 10*time.Millisecond)
 
-	// Wait for ticker triggers
-	time.Sleep(160 * time.Millisecond)
-	cancel()
-
-	if count := atomic.LoadInt32(&triggerCount); count < 2 {
-		t.Errorf("expected reconciliation loop to trigger at least 2 times, got %d", count)
+	// Wait for at least 2 triggers deterministically
+	for i := 0; i < 2; i++ {
+		select {
+		case <-triggerCh:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for reconciliation trigger %d", i+1)
+		}
 	}
 }

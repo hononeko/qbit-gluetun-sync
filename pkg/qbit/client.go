@@ -3,14 +3,26 @@ package qbit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+// ClientOptions configures optional settings for the qBitTorrent client.
+type ClientOptions struct {
+	InsecureSkipVerify bool
+	CACertFile         string
+	Timeout            time.Duration
+}
 
 // Client handles communication with the qBitTorrent API.
 type Client struct {
@@ -21,16 +33,62 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
-// NewClient creates a new qBitTorrent client.
+// NewClient creates a new qBitTorrent client with default options.
 func NewClient(baseURL, user, pass string) *Client {
+	client, _ := NewClientWithOptions(baseURL, user, pass, ClientOptions{})
+	return client
+}
+
+// NewClientWithOptions creates a new qBitTorrent client with custom TLS and timeout options.
+func NewClientWithOptions(baseURL, user, pass string, opts ClientOptions) (*Client, error) {
+	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: opts.InsecureSkipVerify, //nolint:gosec // Configurable for internal/self-signed certs
+	}
+
+	if opts.CACertFile != "" {
+		cleanPath := filepath.Clean(opts.CACertFile)
+		caCert, err := os.ReadFile(cleanPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read custom CA cert file %s: %w", cleanPath, err)
+		}
+		caCertPool, err := x509.SystemCertPool()
+		if err != nil || caCertPool == nil {
+			caCertPool = x509.NewCertPool()
+		}
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to append custom CA cert from %s: invalid PEM format", cleanPath)
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	timeout := 10 * time.Second
+	if opts.Timeout > 0 {
+		timeout = opts.Timeout
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		IdleConnTimeout:       30 * time.Second,
+		MaxIdleConns:          10,
+		MaxIdleConnsPerHost:   5,
+	}
+
 	return &Client{
 		BaseURL:  baseURL,
 		Username: user,
 		Password: pass,
 		HTTPClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Transport: transport,
+			Timeout:   timeout,
 		},
-	}
+	}, nil
 }
 
 // authenticate retrieves the auth cookie if credentials are provided.

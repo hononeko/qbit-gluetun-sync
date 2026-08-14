@@ -13,8 +13,8 @@ COPY . .
 # Build static binary, ensuring CGO is disabled
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o qbit-gluetun-sync ./cmd/sync
 
-# -- Stage 3: Final Image
-FROM gcr.io/distroless/cc-debian12:nonroot
+# -- Stage 3: Final Image (minimal static distroless)
+FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /
 # Copy certs & tzdata from downloader
 COPY --from=downloader /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
