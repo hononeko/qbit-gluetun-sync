@@ -3,9 +3,12 @@ package qbit
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -113,5 +116,134 @@ func TestClient_SetListenPort(t *testing.T) {
 	err = badClient.SetListenPort(ctx, 12345)
 	if err == nil {
 		t.Fatalf("expected auth error on bad password, got nil")
+	}
+}
+
+func TestClient_APIKeyAuth(t *testing.T) {
+	// Mock Server with API Key Verification
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiKeyHeader := r.Header.Get("X-Custom-Key")
+		authHeader := r.Header.Get("Authorization")
+
+		if apiKeyHeader != "secret_api_token" || authHeader != "Bearer secret_api_token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if r.URL.Path == "/api/v2/app/setPreferences" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	//nolint:gosec // Mock test token
+	client, err := NewClientWithOptions(server.URL, "", "", ClientOptions{
+		APIKey:       "secret_api_token",
+		APIKeyHeader: "X-Custom-Key",
+	})
+	if err != nil {
+		t.Fatalf("failed to create client with API key: %v", err)
+	}
+
+	err = client.SetListenPort(ctx, 23456)
+	if err != nil {
+		t.Fatalf("expected successful API key auth, got %v", err)
+	}
+
+	// Bad API key
+	//nolint:gosec // Mock test token
+	badKeyClient, err := NewClientWithOptions(server.URL, "", "", ClientOptions{
+		APIKey:       "wrong_token",
+		APIKeyHeader: "X-Custom-Key",
+	})
+	if err != nil {
+		t.Fatalf("failed to create client with bad API key: %v", err)
+	}
+	err = badKeyClient.SetListenPort(ctx, 23456)
+	if err == nil {
+		t.Fatalf("expected 401 error with wrong API key, got nil")
+	}
+}
+
+func TestClient_TLSOptions(t *testing.T) {
+	// Mock TLS Server
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"listen_port": 50000}`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Default client should fail TLS verification on self-signed cert
+	defaultClient := NewClient(server.URL, "", "")
+	_, err := defaultClient.GetPreferences(ctx)
+	if err == nil {
+		t.Fatalf("expected TLS verification failure on self-signed cert, got nil")
+	}
+
+	// Client with InsecureSkipVerify should succeed
+	tlsClient, err := NewClientWithOptions(server.URL, "", "", ClientOptions{
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create client with InsecureSkipVerify: %v", err)
+	}
+
+	prefs, err := tlsClient.GetPreferences(ctx)
+	if err != nil {
+		t.Fatalf("expected success with InsecureSkipVerify, got %v", err)
+	}
+	if p, ok := prefs["listen_port"].(float64); !ok || int(p) != 50000 {
+		t.Fatalf("expected listen_port 50000, got %v", prefs["listen_port"])
+	}
+
+	// Test valid custom CA cert
+	tempDir := t.TempDir()
+	caCertFile := filepath.Join(tempDir, "server_ca.crt")
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: server.Certificate().Raw,
+	})
+	if err := os.WriteFile(caCertFile, certPEM, 0600); err != nil {
+		t.Fatalf("failed to write custom CA file: %v", err)
+	}
+
+	caClient, err := NewClientWithOptions(server.URL, "", "", ClientOptions{
+		CACertFile: caCertFile,
+	})
+	if err != nil {
+		t.Fatalf("failed to create client with custom CA cert: %v", err)
+	}
+	prefsWithCA, err := caClient.GetPreferences(ctx)
+	if err != nil {
+		t.Fatalf("expected success with valid custom CA cert, got %v", err)
+	}
+	if p, ok := prefsWithCA["listen_port"].(float64); !ok || int(p) != 50000 {
+		t.Fatalf("expected listen_port 50000 with custom CA, got %v", prefsWithCA["listen_port"])
+	}
+
+	// Test invalid CA cert file path
+	_, err = NewClientWithOptions(server.URL, "", "", ClientOptions{
+		CACertFile: "/path/to/nonexistent/ca.crt",
+	})
+	if err == nil {
+		t.Fatalf("expected error for non-existent CA cert file, got nil")
+	}
+
+	// Test corrupt CA cert file
+	corruptCA := filepath.Join(tempDir, "corrupt.crt")
+	_ = os.WriteFile(corruptCA, []byte("NOT_A_VALID_PEM"), 0600)
+	_, err = NewClientWithOptions(server.URL, "", "", ClientOptions{
+		CACertFile: corruptCA,
+	})
+	if err == nil {
+		t.Fatalf("expected error for invalid PEM CA cert, got nil")
 	}
 }

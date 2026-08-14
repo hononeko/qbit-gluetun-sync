@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,13 +31,20 @@ func main() {
 	logLevel := getEnv("LOG_LEVEL", "info")
 	logger.Init(logLevel)
 
-	// Parse environment variables
+	// Parse environment variables and secret files
 	qbitAddr := getEnv("QBIT_ADDR", "http://localhost:8080")
-	qbitUser := getEnv("QBIT_USER", "")
-	qbitPass := getEnv("QBIT_PASS", "")
+	qbitUser := getSecret("QBIT_USER", "QBIT_USER_FILE", "")
+	qbitPass := getSecret("QBIT_PASS", "QBIT_PASS_FILE", "")
+	qbitAPIKey := getSecret("QBIT_API_KEY", "QBIT_API_KEY_FILE", "")
+	qbitAPIKeyHeader := getEnv("QBIT_API_KEY_HEADER", "X-Api-Key")
 	portFile := getEnv("PORT_FILE", "/tmp/gluetun/forwarded_port")
+	listenAddr := getEnv("LISTEN_ADDR", "")
 	listenPort := getEnv("LISTEN_PORT", "9090")
 	syncIntervalStr := getEnv("SYNC_INTERVAL", "10m")
+	insecureSkipVerifyStr := getEnv("QBIT_INSECURE_SKIP_VERIFY", "false")
+	caCertFile := getEnv("QBIT_CA_CERT_FILE", "")
+
+	insecureSkipVerify, _ := strconv.ParseBool(insecureSkipVerifyStr)
 
 	syncInterval, err := time.ParseDuration(syncIntervalStr)
 	if err != nil {
@@ -41,8 +52,18 @@ func main() {
 		syncInterval = 10 * time.Minute
 	}
 
-	// Initialize qBitTorrent Client
-	qbitClient := qbit.NewClient(qbitAddr, qbitUser, qbitPass)
+	// Initialize qBitTorrent Client with security/TLS/Auth options
+	qbitOpts := qbit.ClientOptions{
+		InsecureSkipVerify: insecureSkipVerify,
+		CACertFile:         caCertFile,
+		APIKey:             qbitAPIKey,
+		APIKeyHeader:       qbitAPIKeyHeader,
+		Timeout:            10 * time.Second,
+	}
+	qbitClient, err := qbit.NewClientWithOptions(qbitAddr, qbitUser, qbitPass, qbitOpts)
+	if err != nil {
+		logger.Fatal("Failed to initialize qBitTorrent client", "err", err)
+	}
 
 	// Callback to sync port
 	syncPortFunc := func(port int) {
@@ -106,14 +127,17 @@ func main() {
 	}
 
 	mux := setupMux()
+	bindAddr := net.JoinHostPort(listenAddr, listenPort)
 
-	logger.Info("Starting sidecar server", "listenPort", listenPort, "qbitAddr", qbitAddr)
+	logger.Info("Starting sidecar server", "bindAddr", bindAddr, "qbitAddr", qbitAddr)
 	server := &http.Server{
-		Addr:              ":" + listenPort,
+		Addr:              bindAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
 	// Run HTTP server in background
@@ -178,4 +202,18 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+// getSecret resolves a secret either from a file (e.g. QBIT_PASS_FILE) or from an env var (QBIT_PASS).
+func getSecret(envKey, fileEnvKey, fallback string) string {
+	if filePath, exists := os.LookupEnv(fileEnvKey); exists && strings.TrimSpace(filePath) != "" {
+		cleanPath := filepath.Clean(filePath)
+		//nolint:gosec // Secret file path is explicitly provided by admin configuration
+		data, err := os.ReadFile(cleanPath)
+		if err == nil {
+			return strings.TrimSpace(string(data))
+		}
+		logger.Warn("Failed to read secret file, falling back to environment variable", "fileKey", fileEnvKey, "path", cleanPath, "err", err)
+	}
+	return getEnv(envKey, fallback)
 }

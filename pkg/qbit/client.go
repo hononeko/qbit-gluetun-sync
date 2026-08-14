@@ -3,38 +3,131 @@ package qbit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+// ClientOptions configures optional settings for the qBitTorrent client.
+type ClientOptions struct {
+	InsecureSkipVerify bool
+	CACertFile         string
+	Timeout            time.Duration
+	//nolint:gosec // Field name for API token
+	APIKey       string
+	APIKeyHeader string
+}
 
 // Client handles communication with the qBitTorrent API.
 type Client struct {
 	BaseURL  string
 	Username string
 	//nolint:gosec // Field name requires matching JSON payload
-	Password   string
-	HTTPClient *http.Client
+	Password string
+	//nolint:gosec // Field name for API token
+	APIKey       string
+	APIKeyHeader string
+	HTTPClient   *http.Client
 }
 
-// NewClient creates a new qBitTorrent client.
+// NewClient creates a new qBitTorrent client with default options.
 func NewClient(baseURL, user, pass string) *Client {
+	client, _ := NewClientWithOptions(baseURL, user, pass, ClientOptions{})
+	return client
+}
+
+// NewClientWithOptions creates a new qBitTorrent client with custom TLS, timeout, and API Key options.
+func NewClientWithOptions(baseURL, user, pass string, opts ClientOptions) (*Client, error) {
+	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: opts.InsecureSkipVerify, //nolint:gosec // Configurable for internal/self-signed certs
+	}
+
+	if opts.CACertFile != "" {
+		cleanPath := filepath.Clean(opts.CACertFile)
+		caCert, err := os.ReadFile(cleanPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read custom CA cert file %s: %w", cleanPath, err)
+		}
+		caCertPool, err := x509.SystemCertPool()
+		if err != nil || caCertPool == nil {
+			caCertPool = x509.NewCertPool()
+		}
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to append custom CA cert from %s: invalid PEM format", cleanPath)
+		}
+		tlsConfig.RootCAs = caCertPool
+	}
+
+	timeout := 10 * time.Second
+	if opts.Timeout > 0 {
+		timeout = opts.Timeout
+	}
+
+	transport := &http.Transport{
+		TLSClientConfig: tlsConfig,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		IdleConnTimeout:       30 * time.Second,
+		MaxIdleConns:          10,
+		MaxIdleConnsPerHost:   5,
+	}
+
+	authHeaderName := strings.TrimSpace(opts.APIKeyHeader)
+	if authHeaderName == "" {
+		//nolint:gosec // Header key name, not a secret credential
+		authHeaderName = "X-Api-Key"
+	}
+
 	return &Client{
-		BaseURL:  baseURL,
-		Username: user,
-		Password: pass,
+		BaseURL:      baseURL,
+		Username:     user,
+		Password:     pass,
+		APIKey:       strings.TrimSpace(opts.APIKey),
+		APIKeyHeader: authHeaderName,
 		HTTPClient: &http.Client{
-			Timeout: 10 * time.Second,
+			Transport: transport,
+			Timeout:   timeout,
 		},
+	}, nil
+}
+
+// applyAuth attaches credentials (API Key or SID session cookie) to the request.
+func (c *Client) applyAuth(req *http.Request, cookie string) {
+	if c.APIKey != "" {
+		req.Header.Set(c.APIKeyHeader, c.APIKey)
+		// If custom header is not Authorization, also set Authorization Bearer for reverse proxy compatibility
+		if !strings.EqualFold(c.APIKeyHeader, "Authorization") {
+			req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		}
+		return
+	}
+
+	if cookie != "" {
+		//nolint:gosec // Cookie is used for client request, not server response
+		req.AddCookie(&http.Cookie{Name: "SID", Value: cookie})
 	}
 }
 
-// authenticate retrieves the auth cookie if credentials are provided.
+// authenticate retrieves the auth cookie if credentials are provided and API Key is not set.
 func (c *Client) authenticate(ctx context.Context) (string, error) {
+	if c.APIKey != "" {
+		return "", nil // API Key auth takes precedence, bypasses login endpoint
+	}
+
 	if c.Username == "" && c.Password == "" {
 		return "", nil // No auth required
 	}
@@ -114,11 +207,7 @@ func (c *Client) SetPreferences(ctx context.Context, preferences map[string]inte
 		return fmt.Errorf("failed to create setPreferences request: %w", err)
 	}
 	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
-
-	if cookie != "" {
-		//nolint:gosec // Cookie is used for client request, not server response
-		req.AddCookie(&http.Cookie{Name: "SID", Value: cookie})
-	}
+	c.applyAuth(req, cookie)
 
 	//nolint:gosec // URL is internally constructed via config
 	resp, err := c.HTTPClient.Do(req)
@@ -154,11 +243,7 @@ func (c *Client) GetPreferences(ctx context.Context) (map[string]interface{}, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to create preferences request: %w", err)
 	}
-
-	if cookie != "" {
-		//nolint:gosec // Cookie is used for client request, not server response
-		req.AddCookie(&http.Cookie{Name: "SID", Value: cookie})
-	}
+	c.applyAuth(req, cookie)
 
 	//nolint:gosec // URL is internally constructed via config
 	resp, err := c.HTTPClient.Do(req)
