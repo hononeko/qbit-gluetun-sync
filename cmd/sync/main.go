@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/hononeko/qbit-gluetun-sync/pkg/logger"
@@ -17,6 +21,9 @@ var (
 )
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	logLevel := getEnv("LOG_LEVEL", "info")
 	logger.Init(logLevel)
 
@@ -26,6 +33,13 @@ func main() {
 	qbitPass := getEnv("QBIT_PASS", "")
 	portFile := getEnv("PORT_FILE", "/tmp/gluetun/forwarded_port")
 	listenPort := getEnv("LISTEN_PORT", "9090")
+	syncIntervalStr := getEnv("SYNC_INTERVAL", "10m")
+
+	syncInterval, err := time.ParseDuration(syncIntervalStr)
+	if err != nil {
+		logger.Warn("Invalid SYNC_INTERVAL format, defaulting to 10m", "val", syncIntervalStr, "err", err)
+		syncInterval = 10 * time.Minute
+	}
 
 	// Initialize qBitTorrent Client
 	qbitClient := qbit.NewClient(qbitAddr, qbitUser, qbitPass)
@@ -33,45 +47,62 @@ func main() {
 	// Callback to sync port
 	syncPortFunc := func(port int) {
 		portMu.Lock()
-		defer portMu.Unlock()
-
 		if port == currentPort {
+			portMu.Unlock()
 			logger.Debug("Port is already synced, skipping", "port", port)
 			return
 		}
+		portMu.Unlock()
 
 		logger.Info("Syncing new port to qBitTorrent", "port", port)
 
-		var err error
+		var syncErr error
 		maxRetries := 5
 		backoff := 1 * time.Second
 
 		for i := 0; i < maxRetries; i++ {
-			err = qbitClient.SetListenPort(port)
-			if err == nil {
-				logger.Info("Successfully set port", "port", port)
-				currentPort = port
+			if ctx.Err() != nil {
+				logger.Warn("Context cancelled during sync retry", "port", port)
 				return
 			}
 
-			logger.Warn("Failed to set port", "attempt", i+1, "maxRetries", maxRetries, "err", err)
+			syncErr = qbitClient.SetListenPort(ctx, port)
+			if syncErr == nil {
+				logger.Info("Successfully set port in qBitTorrent", "port", port)
+				portMu.Lock()
+				currentPort = port
+				portMu.Unlock()
+				return
+			}
+
+			logger.Warn("Failed to set port in qBitTorrent", "attempt", i+1, "maxRetries", maxRetries, "err", syncErr)
 			if i < maxRetries-1 {
 				logger.Info("Retrying...", "backoff", backoff)
-				time.Sleep(backoff)
-				backoff *= 2
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(backoff):
+					backoff *= 2
+				}
 			}
 		}
 
-		logger.Error("Exhausted all retries. Failed to sync port to qBitTorrent", "port", port, "err", err)
+		logger.Error("Exhausted all retries. Failed to sync port to qBitTorrent", "port", port, "err", syncErr)
 	}
 
-	// Do initial check in case file already exists
+	// Initial check in case file already exists
 	watcher.CheckFileNow(portFile, syncPortFunc)
 
-	// Start file watcher
-	logger.Info("Starting watcher", "file", portFile)
-	if err := watcher.WatchFile(portFile, syncPortFunc); err != nil {
-		logger.Warn("Failed to start file watcher (will keep running without it)", "err", err)
+	// Start file watcher with context lifecycle
+	logger.Info("Starting file watcher", "file", portFile)
+	if err := watcher.WatchFile(ctx, portFile, syncPortFunc); err != nil {
+		logger.Warn("Failed to start file watcher", "err", err)
+	}
+
+	// Start periodic reconciliation loop if configured
+	if syncInterval > 0 {
+		logger.Info("Starting reconciliation loop", "interval", syncInterval)
+		go runReconciliationLoop(ctx, portFile, syncPortFunc, syncInterval)
 	}
 
 	mux := setupMux()
@@ -85,8 +116,45 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 	}
 
-	if err := server.ListenAndServe(); err != nil {
-		logger.Fatal("Server failed", "err", err)
+	// Run HTTP server in background
+	serverErrCh := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErrCh <- err
+		}
+		close(serverErrCh)
+	}()
+
+	// Wait for shutdown signal or fatal server error
+	select {
+	case <-ctx.Done():
+		logger.Info("Shutdown signal received, shutting down gracefully...")
+	case err := <-serverErrCh:
+		logger.Fatal("HTTP server failed unexpectedly", "err", err)
+	}
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Server shutdown failed", "err", err)
+	} else {
+		logger.Info("Server stopped cleanly")
+	}
+}
+
+func runReconciliationLoop(ctx context.Context, portFile string, syncPortFunc func(port int), interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			logger.Debug("Reconciliation ticker: checking port file", "file", portFile)
+			watcher.CheckFileNow(portFile, syncPortFunc)
+		}
 	}
 }
 
