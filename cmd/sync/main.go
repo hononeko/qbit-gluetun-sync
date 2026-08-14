@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -19,17 +21,137 @@ import (
 	"github.com/hononeko/qbit-gluetun-sync/pkg/watcher"
 )
 
-var (
-	currentPort int
-	portMu      sync.Mutex
-)
+// SyncState tracks real-time sync metrics and upstream health.
+type SyncState struct {
+	mu                     sync.RWMutex
+	currentPort            int
+	lastSuccessTime        time.Time
+	lastAttemptTime        time.Time
+	lastSyncErr            string
+	syncSuccessCount       int64
+	syncFailureCount       int64
+	qbittorrentReachable   bool
+	initialSyncDone        bool
+	reconciliationInterval time.Duration
+}
+
+func (s *SyncState) recordSuccess(port int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	s.currentPort = port
+	s.lastSuccessTime = now
+	s.lastAttemptTime = now
+	s.lastSyncErr = ""
+	s.syncSuccessCount++
+	s.qbittorrentReachable = true
+	s.initialSyncDone = true
+}
+
+func (s *SyncState) recordFailure(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lastAttemptTime = time.Now().UTC()
+	if err != nil {
+		s.lastSyncErr = err.Error()
+	}
+	s.syncFailureCount++
+	s.qbittorrentReachable = false
+}
+
+func (s *SyncState) isReady() (bool, string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialSyncDone {
+		return false, "waiting for initial port synchronization"
+	}
+	if !s.qbittorrentReachable {
+		return false, fmt.Sprintf("qbittorrent unreachable (last error: %s)", s.lastSyncErr)
+	}
+	return true, ""
+}
+
+func (s *SyncState) getStatus() map[string]interface{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	status := "synced"
+	if !s.initialSyncDone {
+		status = "waiting_for_initial_sync"
+	} else if !s.qbittorrentReachable {
+		status = "degraded"
+	}
+
+	res := map[string]interface{}{
+		"status":                  status,
+		"current_port":            s.currentPort,
+		"last_sync_error":         s.lastSyncErr,
+		"sync_success_count":      s.syncSuccessCount,
+		"sync_failure_count":      s.syncFailureCount,
+		"qbittorrent_reachable":   s.qbittorrentReachable,
+		"initial_sync_done":       s.initialSyncDone,
+		"reconciliation_interval": s.reconciliationInterval.String(),
+	}
+	if !s.lastSuccessTime.IsZero() {
+		res["last_success_time"] = s.lastSuccessTime.Format(time.RFC3339)
+	}
+	if !s.lastAttemptTime.IsZero() {
+		res["last_attempt_time"] = s.lastAttemptTime.Format(time.RFC3339)
+	}
+	return res
+}
+
+func (s *SyncState) getMetrics() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var lastSuccessTimestamp int64
+	if !s.lastSuccessTime.IsZero() {
+		lastSuccessTimestamp = s.lastSuccessTime.Unix()
+	}
+
+	reachableVal := 0
+	if s.qbittorrentReachable {
+		reachableVal = 1
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# HELP qbit_gluetun_sync_current_port Currently configured listening port in qBitTorrent\n")
+	sb.WriteString("# TYPE qbit_gluetun_sync_current_port gauge\n")
+	fmt.Fprintf(&sb, "qbit_gluetun_sync_current_port %d\n\n", s.currentPort)
+
+	sb.WriteString("# HELP qbit_gluetun_sync_operations_total Total number of port sync attempts\n")
+	sb.WriteString("# TYPE qbit_gluetun_sync_operations_total counter\n")
+	fmt.Fprintf(&sb, "qbit_gluetun_sync_operations_total{status=\"success\"} %d\n", s.syncSuccessCount)
+	fmt.Fprintf(&sb, "qbit_gluetun_sync_operations_total{status=\"failure\"} %d\n\n", s.syncFailureCount)
+
+	sb.WriteString("# HELP qbit_gluetun_sync_last_success_timestamp_seconds Unix timestamp of last successful sync\n")
+	sb.WriteString("# TYPE qbit_gluetun_sync_last_success_timestamp_seconds gauge\n")
+	fmt.Fprintf(&sb, "qbit_gluetun_sync_last_success_timestamp_seconds %d\n\n", lastSuccessTimestamp)
+
+	sb.WriteString("# HELP qbit_gluetun_sync_qbittorrent_reachable Whether qBitTorrent is currently reachable (1 for reachable, 0 for unreachable)\n")
+	sb.WriteString("# TYPE qbit_gluetun_sync_qbittorrent_reachable gauge\n")
+	fmt.Fprintf(&sb, "qbit_gluetun_sync_qbittorrent_reachable %d\n", reachableVal)
+
+	return sb.String()
+}
 
 func main() {
+	// Parse CLI healthcheck flag before service startup
+	listenAddr := getEnv("LISTEN_ADDR", "")
+	listenPort := getEnv("LISTEN_PORT", "9090")
+
+	if isHealthCheckMode(os.Args) {
+		code := runCLIHealthCheck(listenAddr, listenPort)
+		os.Exit(code)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	logLevel := getEnv("LOG_LEVEL", "info")
-	logger.Init(logLevel)
+	logFormat := getEnv("LOG_FORMAT", "text")
+	logger.InitWithFormat(logLevel, logFormat)
 
 	// Parse environment variables and secret files
 	qbitAddr := getEnv("QBIT_ADDR", "http://localhost:8080")
@@ -38,8 +160,6 @@ func main() {
 	qbitAPIKey := getSecret("QBIT_API_KEY", "QBIT_API_KEY_FILE", "")
 	qbitAPIKeyHeader := getEnv("QBIT_API_KEY_HEADER", "X-Api-Key")
 	portFile := getEnv("PORT_FILE", "/tmp/gluetun/forwarded_port")
-	listenAddr := getEnv("LISTEN_ADDR", "")
-	listenPort := getEnv("LISTEN_PORT", "9090")
 	syncIntervalStr := getEnv("SYNC_INTERVAL", "10m")
 	insecureSkipVerifyStr := getEnv("QBIT_INSECURE_SKIP_VERIFY", "false")
 	caCertFile := getEnv("QBIT_CA_CERT_FILE", "")
@@ -50,6 +170,10 @@ func main() {
 	if err != nil {
 		logger.Warn("Invalid SYNC_INTERVAL format, defaulting to 10m", "val", syncIntervalStr, "err", err)
 		syncInterval = 10 * time.Minute
+	}
+
+	state := &SyncState{
+		reconciliationInterval: syncInterval,
 	}
 
 	// Initialize qBitTorrent Client with security/TLS/Auth options
@@ -67,13 +191,13 @@ func main() {
 
 	// Callback to sync port
 	syncPortFunc := func(port int) {
-		portMu.Lock()
-		if port == currentPort {
-			portMu.Unlock()
+		state.mu.RLock()
+		if port == state.currentPort && state.qbittorrentReachable {
+			state.mu.RUnlock()
 			logger.Debug("Port is already synced, skipping", "port", port)
 			return
 		}
-		portMu.Unlock()
+		state.mu.RUnlock()
 
 		logger.Info("Syncing new port to qBitTorrent", "port", port)
 
@@ -90,9 +214,7 @@ func main() {
 			syncErr = qbitClient.SetListenPort(ctx, port)
 			if syncErr == nil {
 				logger.Info("Successfully set port in qBitTorrent", "port", port)
-				portMu.Lock()
-				currentPort = port
-				portMu.Unlock()
+				state.recordSuccess(port)
 				return
 			}
 
@@ -108,6 +230,7 @@ func main() {
 			}
 		}
 
+		state.recordFailure(syncErr)
 		logger.Error("Exhausted all retries. Failed to sync port to qBitTorrent", "port", port, "err", syncErr)
 	}
 
@@ -126,7 +249,7 @@ func main() {
 		go runReconciliationLoop(ctx, portFile, syncPortFunc, syncInterval)
 	}
 
-	mux := setupMux()
+	mux := setupMux(state)
 	bindAddr := net.JoinHostPort(listenAddr, listenPort)
 
 	logger.Info("Starting sidecar server", "bindAddr", bindAddr, "qbitAddr", qbitAddr)
@@ -182,19 +305,111 @@ func runReconciliationLoop(ctx context.Context, portFile string, syncPortFunc fu
 	}
 }
 
-func setupMux() *http.ServeMux {
+func setupMux(state *SyncState) *http.ServeMux {
 	mux := http.NewServeMux()
+
+	// /healthz - Liveness probe
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte("OK")); err != nil {
-			logger.Error("Failed to write healthz response", "err", err)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	// /readyz - Readiness probe
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+		if state == nil {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
+			return
+		}
+		ready, reason := state.isReady()
+		if ready {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("READY"))
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprintf(w, "NOT READY: %s", reason)
+	})
+
+	// /status - JSON diagnostic endpoint
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if state != nil {
+			_ = json.NewEncoder(w).Encode(state.getStatus())
+		} else {
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		}
 	})
+
+	// /metrics - Prometheus exposition endpoint
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		if state != nil {
+			_, _ = w.Write([]byte(state.getMetrics()))
+		}
+	})
+
 	return mux
+}
+
+func isHealthCheckMode(args []string) bool {
+	for _, arg := range args[1:] {
+		if arg == "-healthcheck" || arg == "--healthcheck" {
+			return true
+		}
+	}
+	return false
+}
+
+func runCLIHealthCheck(listenAddr, listenPort string) int {
+	host := listenAddr
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	targetURL := fmt.Sprintf("http://%s/healthz", net.JoinHostPort(host, listenPort))
+
+	client := &http.Client{
+		Timeout: 3 * time.Second,
+	}
+
+	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Health check error creating request: %v\n", err)
+		return 1
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Health check failed: %v\n", err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode == http.StatusOK {
+		fmt.Println("Health check OK")
+		return 0
+	}
+
+	fmt.Fprintf(os.Stderr, "Health check returned status: %d\n", resp.StatusCode)
+	return 1
 }
 
 func getEnv(key, fallback string) string {
