@@ -12,12 +12,13 @@ When using VPN providers like ProtonVPN with WireGuard through [Gluetun](https:/
 
 Instead of relying on heavy polling shell scripts, this project provides a **Go-based sidecar** that:
 
-- **Resilient File Watching:** Watches the `/tmp/gluetun/forwarded_port` file using `fsnotify` for instant updates. Automatically detects delayed directory creation and handles volume remounts gracefully.
+- **Resilient File Watching & REST API:** Watches the `/tmp/gluetun/forwarded_port` file using `fsnotify` and optionally polls Gluetun's REST API (`GLUETUN_ADDR`) as a dynamic fallback or alternative source.
 - **Self-Healing Reconciliation:** Runs a periodic reconciliation loop (`SYNC_INTERVAL`) to ensure qBitTorrent stays synchronized even after container reboots or network blips.
 - **Flexible Authentication:** Supports standard username/password sessions as well as API Key / Bearer tokens (`QBIT_API_KEY`, `QBIT_API_KEY_FILE`).
 - **Secret Management & File Mounts:** Supports secret files (`QBIT_PASS_FILE`, `QBIT_USER_FILE`, `QBIT_API_KEY_FILE`) for Docker Secrets and Kubernetes Secrets integration.
+- **Webhook Notifications:** Dispatches HTTP POST notifications to Discord or generic webhook endpoints (`WEBHOOK_URL`) on forwarded port updates.
+- **Manual Sync Webhook:** Exposes `POST /sync` to allow external tools and CI pipelines to trigger immediate synchronization.
 - **Hardened Container Security:** Runs as unprivileged `nonroot` inside Google's minimal `distroless/static-debian12` image (zero C shared library footprint).
-- **Graceful Lifecycle Management:** Traps `SIGINT`/`SIGTERM` to perform clean draining and termination.
 - **Observability & Probes:** Exposes `/healthz` (liveness), `/readyz` (readiness), `/status` (JSON diagnostics), and `/metrics` (Prometheus exposition).
 - **Distroless Native Healthcheck:** Built-in CLI `-healthcheck` flag for native container health checking without `curl` or `sh`.
 
@@ -43,6 +44,14 @@ The application is configured using Environment Variables, grouped by logical do
 | `QBIT_API_KEY` | _(empty)_ | API Key / Bearer token for qBitTorrent (bypasses cookie login). |
 | `QBIT_API_KEY_FILE` | _(empty)_ | File path to read API Key from (takes precedence over `QBIT_API_KEY`). |
 | `QBIT_API_KEY_HEADER` | `X-Api-Key` | Custom HTTP header name used when sending API Key. |
+
+### Integrations & Webhooks (Optional)
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `GLUETUN_ADDR` | _(empty)_ | URL to Gluetun Control Server REST API (e.g. `http://gluetun:8000`). |
+| `WEBHOOK_URL` | _(empty)_ | Webhook URL (Discord or generic JSON) to notify when forwarded port changes. |
+| `QBIT_DISABLE_UPNP` | `false` | When `true`, explicitly disables UPnP (`upnp: false`) in qBitTorrent preferences. |
 
 ### TLS & Network Security (Optional)
 
@@ -74,6 +83,7 @@ The application is configured using Environment Variables, grouped by logical do
 | `/readyz` | `GET` | **Readiness probe.** Returns `200 OK` when initial sync is complete and qBitTorrent is reachable, `503 Service Unavailable` otherwise. |
 | `/status` | `GET` | **Diagnostics.** Returns a detailed JSON payload with sync status, current port, timestamps, and error counters. |
 | `/metrics` | `GET` | **Prometheus metrics.** Exposes `qbit_gluetun_sync_current_port`, `qbit_gluetun_sync_operations_total`, and `qbit_gluetun_sync_qbittorrent_reachable`. |
+| `/sync` | `POST` / `GET` | **Manual Sync Trigger.** Forces an immediate source check (file and Gluetun API) and syncs the port to qBitTorrent. |
 
 ## Usage
 
@@ -120,6 +130,8 @@ services:
       - LISTEN_PORT=9090
       - SYNC_INTERVAL=10m
       - LOG_FORMAT=json
+      # Optional: Webhook alert on port changes
+      - WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
     volumes:
       - gluetun_data:/tmp/gluetun:ro
     healthcheck:

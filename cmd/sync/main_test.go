@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -29,7 +30,7 @@ func TestHealthCheck(t *testing.T) {
 	}
 
 	rr := httptest.NewRecorder()
-	mux := setupMux(nil)
+	mux := setupMux(nil, nil)
 
 	mux.ServeHTTP(rr, req)
 
@@ -56,7 +57,7 @@ func TestHealthCheck(t *testing.T) {
 
 func TestReadyz(t *testing.T) {
 	state := &SyncState{}
-	mux := setupMux(state)
+	mux := setupMux(state, nil)
 
 	// 1. Initial state (not ready)
 	req, _ := http.NewRequest(http.MethodGet, "/readyz", nil)
@@ -99,7 +100,7 @@ func TestStatusEndpoint(t *testing.T) {
 	}
 	state.recordSuccess(34567)
 
-	mux := setupMux(state)
+	mux := setupMux(state, nil)
 	req, _ := http.NewRequest(http.MethodGet, "/status", nil)
 	rr := httptest.NewRecorder()
 
@@ -136,7 +137,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	state.recordSuccess(45678)
 	state.recordFailure(errors.New("temporary error"))
 
-	mux := setupMux(state)
+	mux := setupMux(state, nil)
 	req, _ := http.NewRequest(http.MethodGet, "/metrics", nil)
 	rr := httptest.NewRecorder()
 
@@ -161,6 +162,41 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(body, "qbit_gluetun_sync_last_success_timestamp_seconds") {
 		t.Errorf("metrics missing last_success_timestamp_seconds: %s", body)
+	}
+}
+
+func TestManualSyncEndpoint(t *testing.T) {
+	var triggered int32
+	triggerSync := func() {
+		atomic.AddInt32(&triggered, 1)
+	}
+
+	state := &SyncState{}
+	state.recordSuccess(55555)
+
+	mux := setupMux(state, triggerSync)
+
+	req, _ := http.NewRequest(http.MethodPost, "/sync", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /sync, got %d", rr.Code)
+	}
+
+	if val := atomic.LoadInt32(&triggered); val != 1 {
+		t.Errorf("expected triggerSync to be called once, got %d", val)
+	}
+
+	var res map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode json response: %v", err)
+	}
+	if res["status"] != "sync_triggered" {
+		t.Errorf("expected status sync_triggered, got %v", res["status"])
+	}
+	if port, ok := res["current_port"].(float64); !ok || int(port) != 55555 {
+		t.Errorf("expected current_port 55555, got %v", res["current_port"])
 	}
 }
 
@@ -248,24 +284,15 @@ func TestGetSecret(t *testing.T) {
 }
 
 func TestReconciliationLoop(t *testing.T) {
-	tempDir := t.TempDir()
-	portFile := filepath.Join(tempDir, "forwarded_port")
-
-	if err := os.WriteFile(portFile, []byte("44444\n"), 0600); err != nil {
-		t.Fatalf("failed to write test port file: %v", err)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	triggerCh := make(chan struct{}, 5)
-	syncFunc := func(port int) {
-		if port == 44444 {
-			triggerCh <- struct{}{}
-		}
+	syncFunc := func() {
+		triggerCh <- struct{}{}
 	}
 
-	go runReconciliationLoop(ctx, portFile, syncFunc, 10*time.Millisecond)
+	go runReconciliationLoop(ctx, syncFunc, 10*time.Millisecond)
 
 	// Wait for at least 2 triggers deterministically
 	for i := 0; i < 2; i++ {

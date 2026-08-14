@@ -25,6 +25,7 @@ type ClientOptions struct {
 	//nolint:gosec // Field name for API token
 	APIKey       string
 	APIKeyHeader string
+	DisableUPnP  bool
 }
 
 // Client handles communication with the qBitTorrent API.
@@ -36,6 +37,7 @@ type Client struct {
 	//nolint:gosec // Field name for API token
 	APIKey       string
 	APIKeyHeader string
+	DisableUPnP  bool
 	HTTPClient   *http.Client
 }
 
@@ -45,7 +47,7 @@ func NewClient(baseURL, user, pass string) *Client {
 	return client
 }
 
-// NewClientWithOptions creates a new qBitTorrent client with custom TLS, timeout, and API Key options.
+// NewClientWithOptions creates a new qBitTorrent client with custom TLS, timeout, API Key, and UPnP options.
 func NewClientWithOptions(baseURL, user, pass string, opts ClientOptions) (*Client, error) {
 	tlsConfig := &tls.Config{
 		MinVersion:         tls.VersionTLS12,
@@ -98,6 +100,7 @@ func NewClientWithOptions(baseURL, user, pass string, opts ClientOptions) (*Clie
 		Password:     pass,
 		APIKey:       strings.TrimSpace(opts.APIKey),
 		APIKeyHeader: authHeaderName,
+		DisableUPnP:  opts.DisableUPnP,
 		HTTPClient: &http.Client{
 			Transport: transport,
 			Timeout:   timeout,
@@ -264,7 +267,7 @@ func (c *Client) GetPreferences(ctx context.Context) (map[string]interface{}, er
 	return prefs, nil
 }
 
-// SetListenPort sets the listen port in qBitTorrent with validation.
+// SetListenPort sets the listen port in qBitTorrent with validation, optionally disabling UPnP.
 func (c *Client) SetListenPort(ctx context.Context, port int) error {
 	if port <= 0 || port > 65535 {
 		return fmt.Errorf("invalid port number: %d (must be between 1 and 65535)", port)
@@ -272,6 +275,9 @@ func (c *Client) SetListenPort(ctx context.Context, port int) error {
 
 	prefs := map[string]interface{}{
 		"listen_port": port,
+	}
+	if c.DisableUPnP {
+		prefs["upnp"] = false
 	}
 	return c.SetPreferences(ctx, prefs)
 }

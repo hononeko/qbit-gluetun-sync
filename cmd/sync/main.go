@@ -16,7 +16,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hononeko/qbit-gluetun-sync/pkg/gluetun"
 	"github.com/hononeko/qbit-gluetun-sync/pkg/logger"
+	"github.com/hononeko/qbit-gluetun-sync/pkg/notifier"
 	"github.com/hononeko/qbit-gluetun-sync/pkg/qbit"
 	"github.com/hononeko/qbit-gluetun-sync/pkg/watcher"
 )
@@ -160,11 +162,15 @@ func main() {
 	qbitAPIKey := getSecret("QBIT_API_KEY", "QBIT_API_KEY_FILE", "")
 	qbitAPIKeyHeader := getEnv("QBIT_API_KEY_HEADER", "X-Api-Key")
 	portFile := getEnv("PORT_FILE", "/tmp/gluetun/forwarded_port")
+	gluetunAddr := getEnv("GLUETUN_ADDR", "")
+	webhookURL := getEnv("WEBHOOK_URL", "")
 	syncIntervalStr := getEnv("SYNC_INTERVAL", "10m")
 	insecureSkipVerifyStr := getEnv("QBIT_INSECURE_SKIP_VERIFY", "false")
+	disableUPnPStr := getEnv("QBIT_DISABLE_UPNP", "false")
 	caCertFile := getEnv("QBIT_CA_CERT_FILE", "")
 
 	insecureSkipVerify, _ := strconv.ParseBool(insecureSkipVerifyStr)
+	disableUPnP, _ := strconv.ParseBool(disableUPnPStr)
 
 	syncInterval, err := time.ParseDuration(syncIntervalStr)
 	if err != nil {
@@ -176,12 +182,20 @@ func main() {
 		reconciliationInterval: syncInterval,
 	}
 
+	notifierClient := notifier.NewNotifier()
+	var gluetunClient *gluetun.Client
+	if gluetunAddr != "" {
+		logger.Info("Gluetun REST API configured as dynamic sync source", "addr", gluetunAddr)
+		gluetunClient = gluetun.NewClient(gluetunAddr)
+	}
+
 	// Initialize qBitTorrent Client with security/TLS/Auth options
 	qbitOpts := qbit.ClientOptions{
 		InsecureSkipVerify: insecureSkipVerify,
 		CACertFile:         caCertFile,
 		APIKey:             qbitAPIKey,
 		APIKeyHeader:       qbitAPIKeyHeader,
+		DisableUPnP:        disableUPnP,
 		Timeout:            10 * time.Second,
 	}
 	qbitClient, err := qbit.NewClientWithOptions(qbitAddr, qbitUser, qbitPass, qbitOpts)
@@ -192,6 +206,7 @@ func main() {
 	// Callback to sync port
 	syncPortFunc := func(port int) {
 		state.mu.RLock()
+		prevPort := state.currentPort
 		if port == state.currentPort && state.qbittorrentReachable {
 			state.mu.RUnlock()
 			logger.Debug("Port is already synced, skipping", "port", port)
@@ -215,6 +230,19 @@ func main() {
 			if syncErr == nil {
 				logger.Info("Successfully set port in qBitTorrent", "port", port)
 				state.recordSuccess(port)
+
+				// Trigger webhook notification asynchronously on port change
+				if webhookURL != "" && (prevPort != port || prevPort == 0) {
+					go func(pPort, nPort int) {
+						notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer notifyCancel()
+						if notifyErr := notifierClient.SendPortUpdate(notifyCtx, webhookURL, pPort, nPort); notifyErr != nil {
+							logger.Warn("Failed to send webhook notification", "err", notifyErr)
+						} else {
+							logger.Info("Successfully dispatched port change webhook notification", "newPort", nPort)
+						}
+					}(prevPort, port)
+				}
 				return
 			}
 
@@ -234,8 +262,27 @@ func main() {
 		logger.Error("Exhausted all retries. Failed to sync port to qBitTorrent", "port", port, "err", syncErr)
 	}
 
-	// Initial check in case file already exists
-	watcher.CheckFileNow(portFile, syncPortFunc)
+	// Helper to check all available sources (file and/or Gluetun API)
+	checkSourcesFunc := func() {
+		// Check Gluetun API if configured
+		if gluetunClient != nil {
+			gCtx, gCancel := context.WithTimeout(ctx, 5*time.Second)
+			gPort, gErr := gluetunClient.GetForwardedPort(gCtx)
+			gCancel()
+			if gErr == nil && gPort > 0 {
+				logger.Debug("Retrieved forwarded port from Gluetun API", "port", gPort)
+				syncPortFunc(gPort)
+				return
+			}
+			logger.Debug("Gluetun API check failed or returned 0, checking file", "err", gErr)
+		}
+
+		// Check Port File
+		watcher.CheckFileNow(portFile, syncPortFunc)
+	}
+
+	// Initial check on startup
+	checkSourcesFunc()
 
 	// Start file watcher with context lifecycle
 	logger.Info("Starting file watcher", "file", portFile)
@@ -246,10 +293,10 @@ func main() {
 	// Start periodic reconciliation loop if configured
 	if syncInterval > 0 {
 		logger.Info("Starting reconciliation loop", "interval", syncInterval)
-		go runReconciliationLoop(ctx, portFile, syncPortFunc, syncInterval)
+		go runReconciliationLoop(ctx, checkSourcesFunc, syncInterval)
 	}
 
-	mux := setupMux(state)
+	mux := setupMux(state, checkSourcesFunc)
 	bindAddr := net.JoinHostPort(listenAddr, listenPort)
 
 	logger.Info("Starting sidecar server", "bindAddr", bindAddr, "qbitAddr", qbitAddr)
@@ -290,7 +337,7 @@ func main() {
 	}
 }
 
-func runReconciliationLoop(ctx context.Context, portFile string, syncPortFunc func(port int), interval time.Duration) {
+func runReconciliationLoop(ctx context.Context, checkFunc func(), interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -299,13 +346,13 @@ func runReconciliationLoop(ctx context.Context, portFile string, syncPortFunc fu
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			logger.Debug("Reconciliation ticker: checking port file", "file", portFile)
-			watcher.CheckFileNow(portFile, syncPortFunc)
+			logger.Debug("Reconciliation ticker triggering sync check")
+			checkFunc()
 		}
 	}
 }
 
-func setupMux(state *SyncState) *http.ServeMux {
+func setupMux(state *SyncState, triggerSync func()) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	// /healthz - Liveness probe
@@ -365,6 +412,29 @@ func setupMux(state *SyncState) *http.ServeMux {
 		if state != nil {
 			_, _ = w.Write([]byte(state.getMetrics()))
 		}
+	})
+
+	// /sync - Manual synchronization trigger
+	mux.HandleFunc("/sync", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodGet {
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+			return
+		}
+		if triggerSync != nil {
+			triggerSync()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		resp := map[string]interface{}{
+			"status": "sync_triggered",
+		}
+		if state != nil {
+			state.mu.RLock()
+			resp["current_port"] = state.currentPort
+			resp["qbittorrent_reachable"] = state.qbittorrentReachable
+			state.mu.RUnlock()
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	return mux
