@@ -119,6 +119,39 @@ func TestClient_SetListenPort(t *testing.T) {
 	}
 }
 
+func TestClient_DisableUPnP(t *testing.T) {
+	var receivedPrefs map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v2/app/setPreferences" {
+			_ = r.ParseForm()
+			_ = json.Unmarshal([]byte(r.FormValue("json")), &receivedPrefs)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := NewClientWithOptions(server.URL, "", "", ClientOptions{
+		DisableUPnP: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create client: %v", err)
+	}
+
+	err = client.SetListenPort(ctx, 33333)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if upnp, ok := receivedPrefs["upnp"].(bool); !ok || upnp {
+		t.Errorf("expected upnp to be false in payload, got %v", receivedPrefs["upnp"])
+	}
+}
+
 func TestClient_APIKeyAuth(t *testing.T) {
 	// Mock Server with API Key Verification
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
