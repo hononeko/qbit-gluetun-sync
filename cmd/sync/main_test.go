@@ -1,40 +1,31 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// TestHelperProcess is a requirement of the TEMPLATE.md mandate
-// We don't actually use exec.Command in main.go, but we provide this
-// mock pattern to fully comply with expectations for CLI wrappers.
+// TestHelperProcess is a requirement of the CLI test pattern.
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
 	}
 	defer os.Exit(0)
-	// mock command output
 }
 
-// Ensure mockExecCommand can be used if ever needed (Commented out to appease 'unused' linter, but kept for TEMPLATE.md compliance logic)
-// func mockExecCommand(command string, args ...string) *exec.Cmd {
-// 	cs := []string{"-test.run=TestHelperProcess", "--", command}
-// 	cs = append(cs, args...)
-// 	cmd := exec.Command(os.Args[0], cs...)
-// 	cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1"}
-// 	return cmd
-// }
-
 func TestHealthCheck(t *testing.T) {
-	req, err := http.NewRequest("GET", "/healthz", nil)
+	req, err := http.NewRequest(http.MethodGet, "/healthz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	rr := httptest.NewRecorder()
-	// Test the real router setup
 	mux := setupMux()
 
 	mux.ServeHTTP(rr, req)
@@ -48,7 +39,7 @@ func TestHealthCheck(t *testing.T) {
 	}
 
 	// Test non-GET request
-	reqPost, err := http.NewRequest("POST", "/healthz", nil)
+	reqPost, err := http.NewRequest(http.MethodPost, "/healthz", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +53,7 @@ func TestHealthCheck(t *testing.T) {
 
 func TestGetEnv(t *testing.T) {
 	_ = os.Setenv("TEST_ENV_VAR", "set_value")
+	defer func() { _ = os.Unsetenv("TEST_ENV_VAR") }()
 
 	val := getEnv("TEST_ENV_VAR", "default")
 	if val != "set_value" {
@@ -71,5 +63,34 @@ func TestGetEnv(t *testing.T) {
 	val2 := getEnv("MISSING_VAR", "default")
 	if val2 != "default" {
 		t.Errorf("Expected default, got %s", val2)
+	}
+}
+
+func TestReconciliationLoop(t *testing.T) {
+	tempDir := t.TempDir()
+	portFile := filepath.Join(tempDir, "forwarded_port")
+
+	if err := os.WriteFile(portFile, []byte("44444\n"), 0600); err != nil {
+		t.Fatalf("failed to write test port file: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var triggerCount int32
+	syncFunc := func(port int) {
+		if port == 44444 {
+			atomic.AddInt32(&triggerCount, 1)
+		}
+	}
+
+	go runReconciliationLoop(ctx, portFile, syncFunc, 50*time.Millisecond)
+
+	// Wait for ticker triggers
+	time.Sleep(160 * time.Millisecond)
+	cancel()
+
+	if count := atomic.LoadInt32(&triggerCount); count < 2 {
+		t.Errorf("expected reconciliation loop to trigger at least 2 times, got %d", count)
 	}
 }
