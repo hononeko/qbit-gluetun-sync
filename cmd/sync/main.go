@@ -35,6 +35,8 @@ func main() {
 	qbitAddr := getEnv("QBIT_ADDR", "http://localhost:8080")
 	qbitUser := getSecret("QBIT_USER", "QBIT_USER_FILE", "")
 	qbitPass := getSecret("QBIT_PASS", "QBIT_PASS_FILE", "")
+	qbitAPIKey := getSecret("QBIT_API_KEY", "QBIT_API_KEY_FILE", "")
+	qbitAPIKeyHeader := getEnv("QBIT_API_KEY_HEADER", "X-Api-Key")
 	portFile := getEnv("PORT_FILE", "/tmp/gluetun/forwarded_port")
 	listenAddr := getEnv("LISTEN_ADDR", "")
 	listenPort := getEnv("LISTEN_PORT", "9090")
@@ -50,10 +52,12 @@ func main() {
 		syncInterval = 10 * time.Minute
 	}
 
-	// Initialize qBitTorrent Client with security/TLS options
+	// Initialize qBitTorrent Client with security/TLS/Auth options
 	qbitOpts := qbit.ClientOptions{
 		InsecureSkipVerify: insecureSkipVerify,
 		CACertFile:         caCertFile,
+		APIKey:             qbitAPIKey,
+		APIKeyHeader:       qbitAPIKeyHeader,
 		Timeout:            10 * time.Second,
 	}
 	qbitClient, err := qbit.NewClientWithOptions(qbitAddr, qbitUser, qbitPass, qbitOpts)

@@ -14,8 +14,8 @@ Instead of relying on heavy polling shell scripts, this project provides a **Go-
 
 - **Resilient File Watching:** Watches the `/tmp/gluetun/forwarded_port` file using `fsnotify` for instant updates. Automatically detects delayed directory creation and handles volume remounts gracefully.
 - **Self-Healing Reconciliation:** Runs a periodic reconciliation loop (`SYNC_INTERVAL`) to ensure qBitTorrent stays synchronized even after container reboots or network blips.
-- **qBitTorrent API Sync:** Automatically calls `/api/v2/app/setPreferences` to update the listening port whenever Gluetun assigns a new one.
-- **Secret Management & File Mounts:** Supports secret files (`QBIT_PASS_FILE`, `QBIT_USER_FILE`) for Docker Secrets and Kubernetes Secrets integration.
+- **Flexible Authentication:** Supports standard username/password sessions as well as API Key / Bearer tokens (`QBIT_API_KEY`, `QBIT_API_KEY_FILE`).
+- **Secret Management & File Mounts:** Supports secret files (`QBIT_PASS_FILE`, `QBIT_USER_FILE`, `QBIT_API_KEY_FILE`) for Docker Secrets and Kubernetes Secrets integration.
 - **Hardened Container Security:** Runs as unprivileged `nonroot` inside Google's minimal `distroless/static-debian12` image (zero C shared library footprint).
 - **Graceful Lifecycle Management:** Traps `SIGINT`/`SIGTERM` to perform clean draining and termination.
 - **Health Probing:** Exposes `/healthz` for Kubernetes and Docker liveness checks.
@@ -29,8 +29,11 @@ The application is configured using Environment Variables:
 | `QBIT_ADDR`                  | `http://localhost:8080`       | The address of your qBitTorrent Web UI.                                      |
 | `QBIT_USER`                  | _(empty)_                     | Username for qBitTorrent.                                                    |
 | `QBIT_USER_FILE`             | _(empty)_                     | Path to file containing qBitTorrent username (takes precedence over `QBIT_USER`).|
-| `QBIT_PASS`                  | _(empty)_                     | Password for qBitTorrent.                                                    |
+| `QBIT_PASS`                  | _(empty)_                     | Password for qBitTorrent.                                           |
 | `QBIT_PASS_FILE`             | _(empty)_                     | Path to file containing qBitTorrent password (takes precedence over `QBIT_PASS`).|
+| `QBIT_API_KEY`               | _(empty)_                     | API Key / Bearer token for qBitTorrent or reverse proxy auth.                 |
+| `QBIT_API_KEY_FILE`          | _(empty)_                     | Path to file containing API Key (takes precedence over `QBIT_API_KEY`).       |
+| `QBIT_API_KEY_HEADER`        | `X-Api-Key`                   | Header name used when sending API Key.                                       |
 | `QBIT_INSECURE_SKIP_VERIFY`  | `false`                       | Skip TLS certificate verification for self-signed HTTPS endpoints.           |
 | `QBIT_CA_CERT_FILE`          | _(empty)_                     | Path to custom CA certificate PEM file for verifying HTTPS endpoints.       |
 | `PORT_FILE`                  | `/tmp/gluetun/forwarded_port` | Path to the port file written by Gluetun.                                    |

@@ -119,6 +119,57 @@ func TestClient_SetListenPort(t *testing.T) {
 	}
 }
 
+func TestClient_APIKeyAuth(t *testing.T) {
+	// Mock Server with API Key Verification
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiKeyHeader := r.Header.Get("X-Custom-Key")
+		authHeader := r.Header.Get("Authorization")
+
+		if apiKeyHeader != "secret_api_token" || authHeader != "Bearer secret_api_token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		if r.URL.Path == "/api/v2/app/setPreferences" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	//nolint:gosec // Mock test token
+	client, err := NewClientWithOptions(server.URL, "", "", ClientOptions{
+		APIKey:       "secret_api_token",
+		APIKeyHeader: "X-Custom-Key",
+	})
+	if err != nil {
+		t.Fatalf("failed to create client with API key: %v", err)
+	}
+
+	err = client.SetListenPort(ctx, 23456)
+	if err != nil {
+		t.Fatalf("expected successful API key auth, got %v", err)
+	}
+
+	// Bad API key
+	//nolint:gosec // Mock test token
+	badKeyClient, err := NewClientWithOptions(server.URL, "", "", ClientOptions{
+		APIKey:       "wrong_token",
+		APIKeyHeader: "X-Custom-Key",
+	})
+	if err != nil {
+		t.Fatalf("failed to create client with bad API key: %v", err)
+	}
+	err = badKeyClient.SetListenPort(ctx, 23456)
+	if err == nil {
+		t.Fatalf("expected 401 error with wrong API key, got nil")
+	}
+}
+
 func TestClient_TLSOptions(t *testing.T) {
 	// Mock TLS Server
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
