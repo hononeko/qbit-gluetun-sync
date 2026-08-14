@@ -18,7 +18,8 @@ Instead of relying on heavy polling shell scripts, this project provides a **Go-
 - **Secret Management & File Mounts:** Supports secret files (`QBIT_PASS_FILE`, `QBIT_USER_FILE`, `QBIT_API_KEY_FILE`) for Docker Secrets and Kubernetes Secrets integration.
 - **Hardened Container Security:** Runs as unprivileged `nonroot` inside Google's minimal `distroless/static-debian12` image (zero C shared library footprint).
 - **Graceful Lifecycle Management:** Traps `SIGINT`/`SIGTERM` to perform clean draining and termination.
-- **Health Probing:** Exposes `/healthz` for Kubernetes and Docker liveness checks.
+- **Observability & Probes:** Exposes `/healthz` (liveness), `/readyz` (readiness), `/status` (JSON diagnostics), and `/metrics` (Prometheus exposition).
+- **Distroless Native Healthcheck:** Built-in CLI `-healthcheck` flag for native container health checking without `curl` or `sh`.
 
 ## Configuration
 
@@ -63,6 +64,16 @@ The application is configured using Environment Variables, grouped by logical do
 | :--- | :--- | :--- |
 | `SYNC_INTERVAL` | `10m` | Periodic reconciliation interval (e.g. `5m`, `10m`, `0` to disable). |
 | `LOG_LEVEL` | `info` | Log verbosity level (`debug`, `info`, `warn`, `error`). |
+| `LOG_FORMAT` | `text` | Log format: `text` or `json`. |
+
+## API & Health Endpoints
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/healthz` | `GET` | **Liveness probe.** Returns `200 OK` as long as the process is alive. |
+| `/readyz` | `GET` | **Readiness probe.** Returns `200 OK` when initial sync is complete and qBitTorrent is reachable, `503 Service Unavailable` otherwise. |
+| `/status` | `GET` | **Diagnostics.** Returns a detailed JSON payload with sync status, current port, timestamps, and error counters. |
+| `/metrics` | `GET` | **Prometheus metrics.** Exposes `qbit_gluetun_sync_current_port`, `qbit_gluetun_sync_operations_total`, and `qbit_gluetun_sync_qbittorrent_reachable`. |
 
 ## Usage
 
@@ -108,11 +119,17 @@ services:
       - PORT_FILE=/tmp/gluetun/forwarded_port
       - LISTEN_PORT=9090
       - SYNC_INTERVAL=10m
+      - LOG_FORMAT=json
     volumes:
       - gluetun_data:/tmp/gluetun:ro
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/qbit-gluetun-sync", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 ```
 
-### Kubernetes (Sidecar Pattern with Secrets)
+### Kubernetes (Sidecar Pattern with Probes and Secrets)
 
 If deploying in Kubernetes, deploy inside the same Pod as qBitTorrent with an `emptyDir` volume shared with Gluetun and mounted Secrets.
 
@@ -149,6 +166,8 @@ spec:
               value: "http://localhost:8080"
             - name: QBIT_PASS_FILE
               value: "/etc/secrets/qbit/password"
+            - name: LOG_FORMAT
+              value: "json"
           ports:
             - containerPort: 9090
               name: healthz
@@ -163,6 +182,10 @@ spec:
             httpGet:
               path: /healthz
               port: 9090
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9090
       volumes:
         - name: gluetun-sync
           emptyDir: {}
@@ -170,10 +193,6 @@ spec:
           secret:
             secretName: qbit-credentials
 ```
-
-## API Endpoints
-
-- `GET /healthz` - Returns `200 OK` if the sidecar is running.
 
 ## Development
 

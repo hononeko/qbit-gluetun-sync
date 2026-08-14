@@ -1,15 +1,33 @@
 package logger
 
 import (
+	"io"
 	"log/slog"
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
-var internalLogger *slog.Logger
+var internalLogger atomic.Pointer[slog.Logger]
 
-// Init initializes the global logger with the specified level.
+func init() {
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	defaultLogger := slog.New(slog.NewTextHandler(os.Stdout, opts))
+	internalLogger.Store(defaultLogger)
+}
+
+// Init initializes the global logger with the specified level and format.
 func Init(levelStr string) {
+	InitWithFormat(levelStr, "text")
+}
+
+// InitWithFormat initializes the global logger with level and format ("text" or "json").
+func InitWithFormat(levelStr, formatStr string) {
+	InitWithWriter(levelStr, formatStr, os.Stdout)
+}
+
+// InitWithWriter initializes the global logger with level, format, and custom output writer (useful for tests).
+func InitWithWriter(levelStr, formatStr string, w io.Writer) {
 	var level slog.Level
 	switch strings.ToLower(levelStr) {
 	case "debug":
@@ -27,18 +45,26 @@ func Init(levelStr string) {
 	opts := &slog.HandlerOptions{
 		Level: level,
 	}
-	handler := slog.NewTextHandler(os.Stdout, opts)
-	internalLogger = slog.New(handler)
+
+	var handler slog.Handler
+	if strings.EqualFold(formatStr, "json") {
+		handler = slog.NewJSONHandler(w, opts)
+	} else {
+		handler = slog.NewTextHandler(w, opts)
+	}
+
+	internalLogger.Store(slog.New(handler))
 }
 
-// Ensure the logger falls back to standard log behavior if not initialized
 func getDefault() *slog.Logger {
-	if internalLogger != nil {
-		return internalLogger
+	l := internalLogger.Load()
+	if l != nil {
+		return l
 	}
-	// Fallback during tests or early init
 	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
-	return slog.New(slog.NewTextHandler(os.Stdout, opts))
+	fallback := slog.New(slog.NewTextHandler(os.Stdout, opts))
+	internalLogger.Store(fallback)
+	return fallback
 }
 
 // Info logs an informational message.
