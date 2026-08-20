@@ -6,12 +6,19 @@
     ":semanticCommits",
     "helpers:pinGitHubActionDigests"
   ],
+  "minimumReleaseAge": "3 days",
   "packageRules": [
     {
       "matchPackageNames": [
         "go",
         "golang",
-        "docker.io/library/golang"
+        "docker.io/library/golang",
+        "actions/go-versions",
+        "golang/go"
+      ],
+      "matchDatasources": [
+        "golang-version",
+        "docker"
       ],
       "groupName": "Go"
     },
