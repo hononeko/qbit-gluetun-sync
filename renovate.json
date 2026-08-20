@@ -16,11 +16,15 @@
         "actions/go-versions",
         "golang/go"
       ],
-      "matchDatasources": [
-        "golang-version",
-        "docker"
+      "matchDepNames": [
+        "go",
+        "golang",
+        "docker.io/library/golang",
+        "actions/go-versions",
+        "golang/go"
       ],
-      "groupName": "Go"
+      "groupName": "Go",
+      "rangeStrategy": "bump"
     },
     {
       "matchUpdateTypes": [
