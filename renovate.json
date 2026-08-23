@@ -7,7 +7,6 @@
     "helpers:pinGitHubActionDigests"
   ],
   "minimumReleaseAge": "3 days",
-  "internalChecksFilter": "strict",
   "packageRules": [
     {
       "description": "Bump Go version in go.mod and group it",
