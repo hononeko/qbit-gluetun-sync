@@ -7,6 +7,7 @@
     "helpers:pinGitHubActionDigests"
   ],
   "minimumReleaseAge": "3 days",
+  "rebaseWhen": "behind-base-branch",
   "packageRules": [
     {
       "description": "Bump Go version in go.mod and group it",
@@ -19,12 +20,14 @@
       "description": "Group Dockerfile Go base image updates",
       "matchManagers": ["dockerfile"],
       "matchPackageNames": ["golang", "docker.io/library/golang"],
+      "matchDepNames": ["golang", "docker.io/library/golang"],
       "groupName": "Go"
     },
     {
       "description": "Group GitHub Actions setup-go Go version updates",
       "matchManagers": ["github-actions"],
-      "matchPackageNames": ["actions/go-versions"],
+      "matchPackageNames": ["go", "actions/go-versions"],
+      "matchDepNames": ["go", "actions/go-versions"],
       "groupName": "Go"
     },
     {
