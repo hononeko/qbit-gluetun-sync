@@ -73,7 +73,10 @@ The application is configured using Environment Variables, grouped by logical do
 | :--- | :--- | :--- |
 | `SYNC_INTERVAL` | `10m` | Periodic reconciliation interval (e.g. `5m`, `10m`, `0` to disable). |
 | `LOG_LEVEL` | `info` | Log verbosity level (`debug`, `info`, `warn`, `error`). |
-| `LOG_FORMAT` | `text` | Log format: `text` or `json`. |
+| `LOG_FORMAT` | `text` | Log format: `text` (human-friendly, colorized console output), `json` (structured JSON), or `logfmt`. |
+| `LOG_CALLER` | `false` | When `true`, includes caller source file and line number in log output. |
+| `LOG_TIMESTAMP` | `true` | When `true`, reports timestamps in log messages. |
+| `LOG_TIME_FORMAT` | _(empty / default)_ | Custom time format layout (defaults to `RFC3339` for JSON/logfmt, `2006/01/02 15:04:05` for text). |
 
 ## API & Health Endpoints
 

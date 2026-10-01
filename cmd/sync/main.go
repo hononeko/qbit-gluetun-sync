@@ -153,7 +153,17 @@ func main() {
 
 	logLevel := getEnv("LOG_LEVEL", "info")
 	logFormat := getEnv("LOG_FORMAT", "text")
-	logger.InitWithFormat(logLevel, logFormat)
+	logCaller, _ := strconv.ParseBool(getEnv("LOG_CALLER", "false"))
+	logTimestamp, _ := strconv.ParseBool(getEnv("LOG_TIMESTAMP", "true"))
+	logTimeFormat := getEnv("LOG_TIME_FORMAT", "")
+
+	logger.InitWithOptions(logger.Options{
+		Level:           logLevel,
+		Format:          logFormat,
+		ReportCaller:    logCaller,
+		ReportTimestamp: logTimestamp,
+		TimeFormat:      logTimeFormat,
+	}, os.Stdout)
 
 	// Parse environment variables and secret files
 	qbitAddr := getEnv("QBIT_ADDR", "http://localhost:8080")
