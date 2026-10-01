@@ -3,7 +3,7 @@ module github.com/hononeko/qbit-gluetun-sync
 go 1.27.1
 
 require (
-	github.com/charmbracelet/log v1.0.0
+	github.com/charmbracelet/log/v2 v2.0.1
 	github.com/fsnotify/fsnotify v1.10.1
 )
 
