@@ -50,7 +50,7 @@ Before committing or submitting changes, all of the following steps **MUST** pas
 ### 2.2 Error Handling & Logging
 * **Wrap Errors for Context:** Wrap lower-level errors using `fmt.Errorf("failed to ...: %w", err)` to maintain traceable call stacks.
 * **Never Swallow Errors Silently:** Either handle the error (with an appropriate fallback and log message) or return it up the stack.
-* **Structured Logging:** Use `log/slog` via `pkg/logger`. Pass structured key-value pairs (e.g. `logger.Error("Failed to sync port", "port", port, "err", err)`).
+* **Structured Logging:** Use `charmbracelet/log` via `pkg/logger` (interoperable with `log/slog`). Pass structured key-value pairs (e.g. `logger.Error("Failed to sync port", "port", port, "err", err)`).
 * **Sanitize Log Output:** Never log sensitive credentials (passwords, auth tokens, session cookies) in plaintext.
 
 ### 2.3 Concurrency & State Safety
@@ -103,7 +103,7 @@ Because this service is delivered as a containerized sidecar running in Docker C
 ├── cmd/
 │   └── sync/               # Application entrypoint (main package, CLI routing, HTTP server)
 ├── pkg/
-│   ├── logger/             # Structured logging wrappers (log/slog)
+│   ├── logger/             # Structured logging wrappers (charmbracelet/log with log/slog integration)
 │   ├── qbit/               # qBitTorrent WebUI API client & preference manager
 │   └── watcher/            # Inotify/fsnotify file & directory watcher engine
 ├── .golangci.yml           # Linter configuration
