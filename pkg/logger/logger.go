@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	charmlog "github.com/charmbracelet/log"
+	charmlog "charm.land/log/v2"
 )
 
 // Logger is a type alias to charmlog.Logger.

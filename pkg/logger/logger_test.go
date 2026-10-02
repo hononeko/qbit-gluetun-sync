@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	charmlog "charm.land/log/v2"
 )
 
 func TestLogger_TextFormat(t *testing.T) {
@@ -21,8 +23,20 @@ func TestLogger_TextFormat(t *testing.T) {
 
 	buf.Reset()
 	Debug("test debug message")
-	if !strings.Contains(buf.String(), "DEBU") && !strings.Contains(buf.String(), "DEBUG") {
-		t.Fatalf("expected debug message, got %s", buf.String())
+	if !strings.Contains(buf.String(), "DEBUG") {
+		t.Fatalf("expected DEBUG in message, got %s", buf.String())
+	}
+
+	buf.Reset()
+	Error("test error message")
+	if !strings.Contains(buf.String(), "ERROR") {
+		t.Fatalf("expected ERROR in message, got %s", buf.String())
+	}
+
+	buf.Reset()
+	Warn("test warn message")
+	if !strings.Contains(buf.String(), "WARN") {
+		t.Fatalf("expected WARN in message, got %s", buf.String())
 	}
 }
 
@@ -191,5 +205,18 @@ func TestLogger_FormatHelpers(t *testing.T) {
 	Debugf("formatted %s %d", "debug", 4)
 	if !strings.Contains(buf.String(), "formatted debug 4") {
 		t.Fatalf("unexpected Debugf output: %s", buf.String())
+	}
+}
+
+func TestLogger_SetStyles(t *testing.T) {
+	var buf bytes.Buffer
+	InitWithWriter("info", "text", &buf)
+
+	st := charmlog.DefaultStyles()
+	SetStyles(st)
+
+	Info("styled message")
+	if !strings.Contains(buf.String(), "styled message") {
+		t.Fatalf("unexpected styled message: %s", buf.String())
 	}
 }
