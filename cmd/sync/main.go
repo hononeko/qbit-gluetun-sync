@@ -156,6 +156,7 @@ func main() {
 	logCaller, _ := strconv.ParseBool(getEnv("LOG_CALLER", "false"))
 	logTimestamp, _ := strconv.ParseBool(getEnv("LOG_TIMESTAMP", "true"))
 	logTimeFormat := getEnv("LOG_TIME_FORMAT", "")
+	logColor := getEnv("LOG_COLOR", "")
 
 	logger.InitWithOptions(logger.Options{
 		Level:           logLevel,
@@ -163,6 +164,7 @@ func main() {
 		ReportCaller:    logCaller,
 		ReportTimestamp: logTimestamp,
 		TimeFormat:      logTimeFormat,
+		Color:           logColor,
 	}, os.Stdout)
 
 	// Parse environment variables and secret files

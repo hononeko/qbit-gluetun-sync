@@ -77,6 +77,7 @@ The application is configured using Environment Variables, grouped by logical do
 | `LOG_CALLER` | `false` | When `true`, includes caller source file and line number in log output. |
 | `LOG_TIMESTAMP` | `true` | When `true`, reports timestamps in log messages. |
 | `LOG_TIME_FORMAT` | _(empty / default)_ | Custom time format layout (defaults to `RFC3339` for JSON/logfmt, `2006/01/02 15:04:05` for text). |
+| `LOG_COLOR` | _(auto)_ | Controls ANSI color formatting: `always` (`true`), `never` (`false`), or `auto`. Enabled by default for stdout/stderr in text mode to preserve styling in Docker/Kubernetes container logs (respects `NO_COLOR`). |
 
 ## API & Health Endpoints
 

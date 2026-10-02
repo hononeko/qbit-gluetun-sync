@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 
@@ -218,5 +219,53 @@ func TestLogger_SetStyles(t *testing.T) {
 	Info("styled message")
 	if !strings.Contains(buf.String(), "styled message") {
 		t.Fatalf("unexpected styled message: %s", buf.String())
+	}
+}
+
+func TestLogger_ColorOptions(t *testing.T) {
+	var buf bytes.Buffer
+
+	// Test Color=always forces ANSI escape codes
+	InitWithOptions(Options{
+		Level:           "info",
+		Format:          "text",
+		Color:           "always",
+		ReportTimestamp: false,
+	}, &buf)
+
+	Info("color enabled message")
+	if !strings.Contains(buf.String(), "\x1b[") {
+		t.Fatalf("expected ANSI escape codes with Color=always, got: %q", buf.String())
+	}
+
+	// Test Color=never disables ANSI escape codes
+	buf.Reset()
+	InitWithOptions(Options{
+		Level:           "info",
+		Format:          "text",
+		Color:           "never",
+		ReportTimestamp: false,
+	}, &buf)
+
+	Info("color disabled message")
+	if strings.Contains(buf.String(), "\x1b[") {
+		t.Fatalf("expected no ANSI escape codes with Color=never, got: %q", buf.String())
+	}
+
+	// Test NO_COLOR environment variable disables color even if Color=always
+	_ = os.Setenv("NO_COLOR", "1")
+	defer func() { _ = os.Unsetenv("NO_COLOR") }()
+
+	buf.Reset()
+	InitWithOptions(Options{
+		Level:           "info",
+		Format:          "text",
+		Color:           "always",
+		ReportTimestamp: false,
+	}, &buf)
+
+	Info("no_color env message")
+	if strings.Contains(buf.String(), "\x1b[") {
+		t.Fatalf("expected no ANSI escape codes when NO_COLOR is set, got: %q", buf.String())
 	}
 }
