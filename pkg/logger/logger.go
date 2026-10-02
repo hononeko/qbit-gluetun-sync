@@ -10,6 +10,7 @@ import (
 	"time"
 
 	charmlog "charm.land/log/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
 // Logger is a type alias to charmlog.Logger.
@@ -26,6 +27,7 @@ type Options struct {
 	TimeFormat      string // time format string (e.g. time.RFC3339)
 	ReportCaller    bool   // whether to report caller file and line
 	Prefix          string // optional prefix for log messages
+	Color           string // "auto", "always", "never", "true", "false", "force"
 }
 
 var internalLogger atomic.Pointer[charmlog.Logger]
@@ -37,6 +39,7 @@ func init() {
 		ReportTimestamp: true,
 		TimeFormat:      charmlog.DefaultTimeFormat,
 	})
+	applyColorProfile(defaultLogger, "", os.Stdout)
 	internalLogger.Store(defaultLogger)
 	slog.SetDefault(slog.New(defaultLogger))
 }
@@ -114,8 +117,34 @@ func InitWithOptions(opts Options, w io.Writer) {
 	}
 
 	l := charmlog.NewWithOptions(w, charmOpts)
+	applyColorProfile(l, opts.Color, w)
 	internalLogger.Store(l)
 	slog.SetDefault(slog.New(l))
+}
+
+func applyColorProfile(l *charmlog.Logger, colorOpt string, w io.Writer) {
+	if os.Getenv("NO_COLOR") != "" {
+		l.SetColorProfile(colorprofile.NoTTY)
+		return
+	}
+
+	switch strings.ToLower(strings.TrimSpace(colorOpt)) {
+	case "false", "0", "never", "off", "no":
+		l.SetColorProfile(colorprofile.NoTTY)
+	case "true", "1", "always", "on", "yes", "force":
+		l.SetColorProfile(colorprofile.TrueColor)
+	case "auto":
+		l.SetColorProfile(colorprofile.Detect(w, os.Environ()))
+	default:
+		// In containerized environments (Kubernetes, Docker), stdout is a pipe rather than a TTY.
+		// By default, colorprofile.Detect detects NoTTY and strips all ANSI color and style escape codes.
+		// When writing to stdout or stderr with text format, default to TrueColor so container logs retain Charm's rich styling and colors.
+		if w == os.Stdout || w == os.Stderr {
+			l.SetColorProfile(colorprofile.TrueColor)
+		} else {
+			l.SetColorProfile(colorprofile.Detect(w, os.Environ()))
+		}
+	}
 }
 
 func getDefault() *charmlog.Logger {
@@ -129,6 +158,7 @@ func getDefault() *charmlog.Logger {
 		ReportTimestamp: true,
 		TimeFormat:      charmlog.DefaultTimeFormat,
 	})
+	applyColorProfile(fallback, "", os.Stdout)
 	internalLogger.Store(fallback)
 	slog.SetDefault(slog.New(fallback))
 	return fallback
@@ -187,6 +217,11 @@ func GetLevel() string {
 // SetStyles sets the styles for the active text logger.
 func SetStyles(s *charmlog.Styles) {
 	getDefault().SetStyles(s)
+}
+
+// SetColorProfile sets the color profile on the active logger.
+func SetColorProfile(profile colorprofile.Profile) {
+	getDefault().SetColorProfile(profile)
 }
 
 // FromContext retrieves a logger stored in context, or the global default if not present.
