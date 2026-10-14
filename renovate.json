@@ -19,8 +19,16 @@
     {
       "description": "Group Dockerfile Go base image updates",
       "matchManagers": ["dockerfile"],
-      "matchPackageNames": ["golang", "docker.io/library/golang"],
-      "matchDepNames": ["golang", "docker.io/library/golang"],
+      "matchPackageNames": [
+        "golang",
+        "library/golang",
+        "docker.io/library/golang"
+      ],
+      "matchDepNames": [
+        "golang",
+        "library/golang",
+        "docker.io/library/golang"
+      ],
       "groupName": "Go"
     },
     {
