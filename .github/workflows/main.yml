@@ -2,13 +2,95 @@ name: Main Validation
 
 on:
   push:
-    branches: ["master", "main"]
+    branches: ["main"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: qbit-gluetun-sync
 
 jobs:
   validate:
     uses: ./.github/workflows/validate.yml
     permissions:
       contents: read
-      packages: read
+
+  version:
+    uses: ./.github/workflows/version.yml
+    permissions:
+      contents: read
+
+  # Both architectures' images, built and smoke-tested on every push to main. When there's something to release,
+  # they're pushed by digest for the release candidate below.
+  image:
+    needs: [validate, version]
+    uses: ./.github/workflows/image.yml
     with:
-      image_tag: main-test
+      push: ${{ needs.version.outputs.version_type != 'none' }}
+    permissions:
+      contents: read
+      packages: write
+
+  # Joins both architectures into one multi-arch release candidate. cd.yml later promotes this exact image (by its
+  # commit tag) to the stable version; `latest` is never touched here.
+  release-candidate:
+    name: Publish Release Candidate
+    needs: [version, image]
+    if: needs.version.outputs.version_type != 'none'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/qbit-gluetun-sync
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create multi-arch release candidate
+        id: manifest
+        working-directory: digests
+        env:
+          RC_VERSION: ${{ needs.version.outputs.rc_version }}
+          COMMIT_TAG: ${{ needs.version.outputs.commit_tag }}
+        run: |
+          sources=()
+          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          if [ "${#sources[@]}" -ne 2 ]; then
+            echo "::error::Expected 2 architecture digests (amd64, arm64), got ${#sources[@]}"
+            exit 1
+          fi
+          docker buildx imagetools create -t "$IMAGE:$RC_VERSION" -t "$IMAGE:$COMMIT_TAG" -t "$IMAGE:edge" "${sources[@]}"
+          docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release candidate published"
+            echo "\`$IMAGE:$RC_VERSION\` (also \`$COMMIT_TAG\` and \`edge\`), digest \`$digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate Build Attestation
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true

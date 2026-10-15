@@ -1,0 +1,49 @@
+name: Version
+
+# The next stable version and the release-candidate name for the current commit. Shared by main.yml (publishes the
+# RC) and cd.yml (promotes it), so both always agree on the version and on the commit tag that links them. The rules
+# live in vehkiya/actions/version, shared by all my repositories.
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: Next stable version, e.g. 1.6.0
+        value: ${{ jobs.version.outputs.version }}
+      version_tag:
+        description: Git tag for the next stable version
+        value: ${{ jobs.version.outputs.version_tag }}
+      version_type:
+        description: major, minor, patch, or none when there's nothing to release
+        value: ${{ jobs.version.outputs.version_type }}
+      rc_version:
+        description: Release-candidate version of this commit, e.g. 1.6.0-rc.3
+        value: ${{ jobs.version.outputs.rc_version }}
+      commit_tag:
+        description: Image tag identifying this commit, e.g. sha-1a2b3c4
+        value: ${{ jobs.version.outputs.commit_tag }}
+      last_tag:
+        description: The previous stable git tag (empty for the first release)
+        value: ${{ jobs.version.outputs.last_tag }}
+
+jobs:
+  version:
+    name: Calculate Version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_tag: ${{ steps.version.outputs.version-tag }}
+      version_type: ${{ steps.version.outputs.version-type }}
+      rc_version: ${{ steps.version.outputs.rc-version }}
+      commit_tag: ${{ steps.version.outputs.commit-tag }}
+      last_tag: ${{ steps.version.outputs.previous-tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Version
+        id: version
+        uses: vehkiya/actions/version@38745be070eaab8f0aa89ac688573967094af0d0 # v1.1.0

@@ -112,10 +112,29 @@ Because this service is delivered as a containerized sidecar running in Docker C
 ```
 
 ### Commit Guidelines
-Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
+Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification. Commit subjects become the release notes, so write them for a reader of the release:
 * `feat:` A new feature or capability
 * `fix:` A bug fix or stability correction
 * `refactor:` Code restructuring without behavioral changes
 * `test:` Adding or improving tests
 * `docs:` Documentation updates
 * `chore:` Maintenance, dependency bumps, tooling updates
+
+---
+
+## 5. Release Pipeline
+
+Versions and release notes come from the commit history, using the rules shared by all my repositories in [`vehkiya/actions`](https://github.com/vehkiya/actions):
+* A `!` in the header (`feat!:`) or a `BREAKING CHANGE:` footer gives a **major** release.
+* `feat:` gives a **minor** release.
+* `docs:` and `test:` give no release.
+* Every other type gives a **patch** release.
+
+1. **Pull requests (`pr.yml`):** lint and tests run. Then the image is built and smoke-tested natively on `linux/amd64` and `linux/arm64` (`image.yml`).
+2. **Every push to `main` (`main.yml`):** the same checks run. If there's something to release, both architectures are published as one attested multi-arch **release candidate**: `X.Y.Z-rc.N`, `sha-<commit>` and `edge`.
+3. **Stable release (`cd.yml`, dispatched manually from `main`):**
+   * promotes the dispatched commit's release candidate by re-tagging it as `X.Y.Z` and `latest` (same digest, no rebuild);
+   * creates the git tag and the GitHub Release, with notes grouped into 💥 Breaking changes, 🚀 Features, 🐛 Bug fixes, 👷 CI and 📦 Others;
+   * prunes that version's other release candidates from GHCR.
+
+   Dispatch with `dry_run` to see the release notes and check the candidate without changing anything.
