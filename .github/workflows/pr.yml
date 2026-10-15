@@ -2,7 +2,7 @@ name: PR Validation
 
 on:
   pull_request:
-    branches: ["master", "main"]
+    branches: ["main"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -13,6 +13,11 @@ jobs:
     uses: ./.github/workflows/validate.yml
     permissions:
       contents: read
-      packages: read
-    with:
-      image_tag: pr-test
+
+  # Both architectures, built and smoke-tested without pushing.
+  image:
+    needs: validate
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write

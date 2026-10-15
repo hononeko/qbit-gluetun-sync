@@ -1,46 +1,62 @@
-name: Docker Build and Push
+name: Continuous Delivery & Release
 
+# Promotes the release candidate that main.yml published for this commit to the stable version: the exact tested
+# image is re-tagged as X.Y.Z and `latest` (same digest, no rebuild), then git-tagged and released with grouped
+# release notes. Afterwards, that version's other release candidates are pruned from GHCR.
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Check the release candidate and show the release notes and what would be pruned, without changing anything
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: qbit-gluetun-sync
+  IMAGE: ghcr.io/${{ github.repository_owner }}/qbit-gluetun-sync
 
 jobs:
-  validate:
-    uses: ./.github/workflows/validate.yml
+  version:
+    uses: ./.github/workflows/version.yml
     permissions:
       contents: read
-      packages: read
-    with:
-      image_tag: cd-test
 
-  release:
-    needs: validate
-    runs-on: ubuntu-latest
+  promote:
+    name: Promote, Tag & Release
+    needs: version
+    if: needs.version.outputs.version_type != 'none'
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write # Needed for creating tags and releases
+      contents: write
       packages: write
-      attestations: write
-      id-token: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: ${{ needs.version.outputs.version_tag }}
+      COMMIT_TAG: ${{ needs.version.outputs.commit_tag }}
+      DRY_RUN: ${{ inputs.dry_run }}
 
     steps:
+      - name: Only main publishes
+        if: ${{ !inputs.dry_run && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "::error::Releases are published from main only; dispatch with dry_run to check another branch."
+          exit 1
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          fetch-depth: 0 # Needed for semantic-version to calculate version
+          fetch-depth: 0
 
-      - name: Calculate Semantic Version
-        id: version
-        uses: PaulHatch/semantic-version@4d6da96a9bc3116da3613309a11ff75fba58eb8d # v6.0.4
+      - name: Release notes
+        uses: vehkiya/actions/release-notes@38745be070eaab8f0aa89ac688573967094af0d0 # v1.1.0
         with:
-          change_path: "."
-          bump_each_commit: false
-          tag_prefix: ""
-          major_pattern: "/!:|BREAKING CHANGE:/"
-          minor_pattern: "/feat(\\(.+\\))?:/"
-          version_format: "${major}.${minor}.${patch}"
+          previous-tag: ${{ needs.version.outputs.last_tag }}
+          tag: ${{ needs.version.outputs.version_tag }}
+          summary: Release notes for ${{ needs.version.outputs.version_tag }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
@@ -52,49 +68,83 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.version.outputs.version }}
-
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-
-      - name: Generate Changelog
-        if: steps.version.outputs.version_tag
+      - name: Find the release candidate
+        id: rc
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-          if [ -z "$PREV_TAG" ]; then
-            git log --pretty=format:"* %s (%h)" > changelog.txt
-          else
-            git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" > changelog.txt
+          if ! docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG" > /dev/null 2>&1; then
+            echo "::error::No release candidate for this commit: $IMAGE:$COMMIT_TAG doesn't exist. Main Validation publishes it; check that its run passed for ${GITHUB_SHA::7}."
+            exit 1
           fi
+          docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG"
+          digest=$(docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG" --format '{{json .Manifest}}' | jq -r .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release $VERSION"
+            echo "Release candidate \`$IMAGE:$COMMIT_TAG\`, digest \`$digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Push Git Tag
-        if: steps.version.outputs.version_tag
+      - name: Promote to stable
+        env:
+          DIGEST: ${{ steps.rc.outputs.digest }}
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git tag ${{ steps.version.outputs.version_tag }}
-          git push origin ${{ steps.version.outputs.version_tag }}
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: would tag $IMAGE@$DIGEST as $VERSION and latest"
+            echo "Dry run: would tag \`$DIGEST\` as \`$VERSION\` and \`latest\`" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          docker buildx imagetools create -t "$IMAGE:$VERSION" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
+          # Re-tagging keeps the digest, so the release is byte-for-byte the tested candidate and keeps its attestation.
+          for tag in "$VERSION" latest; do
+            got=$(docker buildx imagetools inspect "$IMAGE:$tag" --format '{{json .Manifest}}' | jq -r .digest)
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::$IMAGE:$tag is $got, expected the release candidate's $DIGEST"
+              exit 1
+            fi
+          done
+          echo "Tagged as \`$VERSION\` and \`latest\`" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Create GitHub Release
-        if: steps.version.outputs.version_tag
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+      - name: Tag & create the GitHub Release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION_TAG" --target "$GITHUB_SHA" --title "$VERSION_TAG" --notes-file release-notes.md
+
+  # Removes this version's release candidates now that one of them is the release. Tags are unlinked rather than
+  # images deleted when an image keeps other tags, so the promoted image survives as X.Y.Z / latest, and so does a
+  # newer candidate still tagged `edge`. A separate job: a pruning failure never undoes the release.
+  prune:
+    name: Prune Release Candidates
+    needs: [version, promote]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          tag_name: ${{ steps.version.outputs.version_tag }}
-          body_path: changelog.txt
+          fetch-depth: 0
+
+      # The candidates of this version: its X.Y.Z-rc.N tags, and the commit tags of every commit since the last release.
+      - name: Select release candidate tags
+        id: select
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          LAST_TAG: ${{ needs.version.outputs.last_tag }}
+        run: |
+          range=HEAD
+          if [ -n "$LAST_TAG" ]; then range="$LAST_TAG..HEAD"; fi
+          commits=$(git rev-list "$range" | cut -c1-7 | paste -sd'|' -)
+          pattern="^(${VERSION//./\\.}-rc\.[0-9]+|sha-($commits))$"
+          echo "pattern=$pattern" >> "$GITHUB_OUTPUT"
+          echo "Pruning tags matching: $pattern"
+
+      - name: Prune
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: qbit-gluetun-sync
+          use-regex: true
+          delete-tags: ${{ steps.select.outputs.pattern }}
+          exclude-tags: ^(latest|edge|[0-9]+\.[0-9]+\.[0-9]+)$
+          validate: true
+          dry-run: ${{ inputs.dry_run }}

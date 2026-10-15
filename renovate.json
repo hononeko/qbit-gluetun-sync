@@ -4,7 +4,11 @@
     "config:recommended",
     "mergeConfidence:all-badges",
     ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
     "helpers:pinGitHubActionDigests"
+  ],
+  "postUpdateOptions": [
+    "gomodTidy"
   ],
   "minimumReleaseAge": "3 days",
   "rebaseWhen": "behind-base-branch",
