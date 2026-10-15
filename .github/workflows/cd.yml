@@ -126,6 +126,8 @@ jobs:
           fetch-depth: 0
 
       # The candidates of this version: its X.Y.Z-rc.N tags, and the commit tags of every commit since the last release.
+      # The pattern can't match X.Y.Z, latest or edge, so there's no exclude-tags: it protects whole images, and would
+      # keep the promoted image's own rc/sha tags too.
       - name: Select release candidate tags
         id: select
         env:
@@ -145,6 +147,5 @@ jobs:
           package: qbit-gluetun-sync
           use-regex: true
           delete-tags: ${{ steps.select.outputs.pattern }}
-          exclude-tags: ^(latest|edge|[0-9]+\.[0-9]+\.[0-9]+)$
           validate: true
           dry-run: ${{ inputs.dry_run }}
