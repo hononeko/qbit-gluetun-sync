@@ -2,7 +2,7 @@ name: Version
 
 # The next stable version and the release-candidate name for the current commit. Shared by main.yml (publishes the
 # RC) and cd.yml (promotes it), so both always agree on the version and on the commit tag that links them. The rules
-# live in vehkiya/actions/version, shared by all my repositories.
+# live in hononeko/actions/version, shared by all my repositories.
 on:
   workflow_call:
     outputs:
@@ -46,4 +46,4 @@ jobs:
 
       - name: Version
         id: version
-        uses: vehkiya/actions/version@38745be070eaab8f0aa89ac688573967094af0d0 # v1.1.0
+        uses: hononeko/actions/version@38745be070eaab8f0aa89ac688573967094af0d0 # v1.1.0
