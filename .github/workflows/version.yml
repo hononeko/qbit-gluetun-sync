@@ -46,4 +46,4 @@ jobs:
 
       - name: Version
         id: version
-        uses: hononeko/actions/version@38745be070eaab8f0aa89ac688573967094af0d0 # v1.1.0
+        uses: hononeko/actions/version@e47317ebddcf234262ded57b9a986397c8c52942 # v1.1.1
