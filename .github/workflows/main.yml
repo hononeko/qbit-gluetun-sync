@@ -49,13 +49,6 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/qbit-gluetun-sync
     steps:
-      - name: Download digests
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          path: digests
-          pattern: digests-*
-          merge-multiple: true
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
@@ -66,31 +59,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create multi-arch release candidate
-        id: manifest
-        working-directory: digests
-        env:
-          RC_VERSION: ${{ needs.version.outputs.rc_version }}
-          COMMIT_TAG: ${{ needs.version.outputs.commit_tag }}
-        run: |
-          sources=()
-          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
-          if [ "${#sources[@]}" -ne 2 ]; then
-            echo "::error::Expected 2 architecture digests (amd64, arm64), got ${#sources[@]}"
-            exit 1
-          fi
-          docker buildx imagetools create -t "$IMAGE:$RC_VERSION" -t "$IMAGE:$COMMIT_TAG" -t "$IMAGE:edge" "${sources[@]}"
-          docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG"
-          digest=$(docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG" --format '{{json .Manifest}}' | jq -r .digest)
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Release candidate published"
-            echo "\`$IMAGE:$RC_VERSION\` (also \`$COMMIT_TAG\` and \`edge\`), digest \`$digest\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Generate Build Attestation
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+      - name: Publish multi-arch release candidate
+        uses: hononeko/actions/publish-image@3898710c9118a72c6d5a7fcedeaea0156469abd8 # v1.3.0
         with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.manifest.outputs.digest }}
-          push-to-registry: true
+          image: ${{ env.IMAGE }}
+          tags: |
+            ${{ needs.version.outputs.rc_version }}
+            ${{ needs.version.outputs.commit_tag }}
+            edge
+          expected-digests: "2"
+          title: Release candidate published
