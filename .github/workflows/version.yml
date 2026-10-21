@@ -5,6 +5,13 @@ name: Version
 # live in hononeko/actions/version, shared by all my repositories.
 on:
   workflow_call:
+    inputs:
+      pr-number:
+        description: >-
+          Pull request to name a snapshot for (snapshot_tag, snapshot_version); its head commit is checked out instead
+          of GitHub's merge commit
+        type: string
+        default: ""
     outputs:
       version:
         description: Next stable version, e.g. 1.6.0
@@ -24,6 +31,12 @@ on:
       last_tag:
         description: The previous stable git tag (empty for the first release)
         value: ${{ jobs.version.outputs.last_tag }}
+      snapshot_tag:
+        description: With pr-number, the snapshot's image tag, e.g. pr-12-sha-1a2b3c4
+        value: ${{ jobs.version.outputs.snapshot_tag }}
+      snapshot_version:
+        description: With pr-number, the snapshot's version, e.g. 1.6.0-pr.12.3
+        value: ${{ jobs.version.outputs.snapshot_version }}
 
 jobs:
   version:
@@ -38,12 +51,17 @@ jobs:
       rc_version: ${{ steps.version.outputs.rc-version }}
       commit_tag: ${{ steps.version.outputs.commit-tag }}
       last_tag: ${{ steps.version.outputs.previous-tag }}
+      snapshot_tag: ${{ steps.version.outputs.snapshot-tag }}
+      snapshot_version: ${{ steps.version.outputs.snapshot-version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.pr-number != '' && github.event.pull_request.head.sha || '' }}
 
       - name: Version
         id: version
-        uses: hononeko/actions/version@5195ba91f927f924616c364a7eddd737fbff5308 # v1.2.0
+        uses: hononeko/actions/version@3898710c9118a72c6d5a7fcedeaea0156469abd8 # v1.3.0
+        with:
+          pr-number: ${{ inputs.pr-number }}

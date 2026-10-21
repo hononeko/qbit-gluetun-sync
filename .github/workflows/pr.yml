@@ -3,21 +3,83 @@ name: PR Validation
 on:
   pull_request:
     branches: ["main"]
+    # labeled: adding the snapshot label publishes a snapshot of the branch (see the snapshot job).
+    types: [opened, synchronize, reopened, labeled]
 
+# Any other label gets a group of its own, so labelling never cancels a running build.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: >-
+    ${{ github.workflow }}-${{ github.ref }}${{
+    github.event.action == 'labeled' && github.event.label.name != 'snapshot' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   validate:
+    # Labelling re-runs the checks only for the snapshot label.
+    if: github.event.action != 'labeled' || github.event.label.name == 'snapshot'
     uses: ./.github/workflows/validate.yml
     permissions:
       contents: read
 
-  # Both architectures, built and smoke-tested without pushing.
-  image:
+  # The snapshot's name, after the pull request's head commit.
+  version:
     needs: validate
+    uses: ./.github/workflows/version.yml
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+    permissions:
+      contents: read
+
+  # Both architectures, built and smoke-tested. With the snapshot label, on a branch of this repository (never a fork's,
+  # whose code mustn't run with a token that can push), the branch's head commit is built and pushed by digest.
+  image:
+    needs: [validate, version]
     uses: ./.github/workflows/image.yml
+    with:
+      push: >-
+        ${{ github.event.pull_request.head.repo.full_name == github.repository
+        && contains(github.event.pull_request.labels.*.name, 'snapshot') }}
+      ref: >-
+        ${{ github.event.pull_request.head.repo.full_name == github.repository
+        && contains(github.event.pull_request.labels.*.name, 'snapshot')
+        && github.event.pull_request.head.sha || '' }}
     permissions:
       contents: read
       packages: write
+
+  # Joins the pushed images into a multi-arch snapshot, tagged pr-<PR>-sha-<commit> and pr-<PR> (the newest), and keeps
+  # a comment on the pull request naming it. snapshot-cleanup.yml deletes the snapshots when the pull request closes.
+  snapshot:
+    name: Publish Snapshot
+    needs: [version, image]
+    if: >-
+      ${{ github.event.pull_request.head.repo.full_name == github.repository
+      && contains(github.event.pull_request.labels.*.name, 'snapshot') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      attestations: write
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-arch snapshot
+        uses: hononeko/actions/publish-image@3898710c9118a72c6d5a7fcedeaea0156469abd8 # v1.3.0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/qbit-gluetun-sync
+          tags: |
+            ${{ needs.version.outputs.snapshot_tag }}
+            pr-${{ github.event.pull_request.number }}
+          expected-digests: "2"
+          title: Snapshot
+          comment-on-pr: ${{ github.event.pull_request.number }}
+          comment-note: For testing only, never for the gitops repository. Deleted when this pull request closes.

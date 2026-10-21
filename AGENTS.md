@@ -131,6 +131,8 @@ Versions and release notes come from the commit history, using the rules shared 
 * Every other type gives a **patch** release.
 
 1. **Pull requests (`pr.yml`):** lint and tests run. Then the image is built and smoke-tested natively on `linux/amd64` and `linux/arm64` (`image.yml`).
+
+   **Snapshots:** a pull request from a branch of this repository labelled `snapshot` also publishes its head commit as a multi-arch image tagged `pr-<PR>-sha-<commit>` and `pr-<PR>` (the newest), after every push, and a comment on the pull request names it. Snapshots are for testing in the cluster before merging, never for the gitops repository. `snapshot-cleanup.yml` deletes them when the pull request closes.
 2. **Every push to `main` (`main.yml`):** the same checks run. If there's something to release, both architectures are published as one attested multi-arch **release candidate**: `X.Y.Z-rc.N`, `sha-<commit>` and `edge`.
 3. **Stable release (`cd.yml`, dispatched manually from `main`):**
    * promotes the dispatched commit's release candidate by re-tagging it as `X.Y.Z` and `latest` (same digest, no rebuild);
