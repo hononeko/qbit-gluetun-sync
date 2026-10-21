@@ -2,20 +2,32 @@ name: Snapshot Cleanup
 
 # Deletes a pull request's snapshot images (pr-<PR>, pr-<PR>-sha-<commit>) once it's closed, merged or not. Only
 # branches of this repository get snapshots, and only their pull requests get a token that can delete packages.
+# Dispatch it with the pull request's number to retry a cleanup that failed.
 on:
   pull_request:
     types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Pull request whose snapshots to delete
+        required: true
+        type: number
+      dry-run:
+        description: Only log what would be deleted
+        type: boolean
+        default: false
 
 jobs:
   prune:
     name: Prune Snapshots
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     permissions:
       packages: write
     steps:
       - name: Prune
-        uses: hononeko/actions/prune-snapshots@3898710c9118a72c6d5a7fcedeaea0156469abd8 # v1.3.0
+        uses: hononeko/actions/prune-snapshots@4acae0f4c94e2171ad3473e6c080a96e3e6c4be9 # v1.3.1
         with:
           package: qbit-gluetun-sync
-          pr-number: ${{ github.event.pull_request.number }}
+          pr-number: ${{ inputs.pr-number || github.event.pull_request.number }}
+          dry-run: ${{ inputs.dry-run || false }}
