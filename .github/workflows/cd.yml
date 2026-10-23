@@ -29,7 +29,7 @@ jobs:
     name: Promote, Tag & Release
     needs: version
     if: needs.version.outputs.version_type != 'none'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
       packages: write
@@ -115,7 +115,7 @@ jobs:
   prune:
     name: Prune Release Candidates
     needs: [version, promote]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       packages: write
