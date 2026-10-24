@@ -62,6 +62,6 @@ jobs:
 
       - name: Version
         id: version
-        uses: hononeko/actions/version@5901cfe081dabc5c46c5c331115a5c9f97af2f31 # v1.3.2
+        uses: hononeko/actions/version@447f70cc12b6edef1ce53187f14c01c582ed7300 # v1.4.0
         with:
           pr-number: ${{ inputs.pr-number }}
