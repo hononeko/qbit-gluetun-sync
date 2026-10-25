@@ -3,20 +3,13 @@ name: PR Validation
 on:
   pull_request:
     branches: ["main"]
-    # labeled: adding the snapshot label publishes a snapshot of the branch (see the snapshot job).
-    types: [opened, synchronize, reopened, labeled]
 
-# Any other label gets a group of its own, so labelling never cancels a running build.
 concurrency:
-  group: >-
-    ${{ github.workflow }}-${{ github.ref }}${{
-    github.event.action == 'labeled' && github.event.label.name != 'snapshot' && format('-{0}', github.run_id) || '' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
-    # Labelling re-runs the checks only for the snapshot label.
-    if: github.event.action != 'labeled' || github.event.label.name == 'snapshot'
     uses: ./.github/workflows/validate.yml
     permissions:
       contents: read

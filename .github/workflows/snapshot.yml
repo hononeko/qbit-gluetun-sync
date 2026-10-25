@@ -1,0 +1,67 @@
+name: PR Snapshot
+
+on:
+  pull_request:
+    branches: ["main"]
+    types: [labeled]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: github.event.label.name == 'snapshot' && github.event.pull_request.head.repo.full_name == github.repository
+    uses: ./.github/workflows/validate.yml
+    permissions:
+      contents: read
+
+  version:
+    needs: validate
+    uses: ./.github/workflows/version.yml
+    with:
+      pr-number: ${{ github.event.pull_request.number }}
+    permissions:
+      contents: read
+
+  image:
+    needs: [validate, version]
+    uses: ./.github/workflows/image.yml
+    with:
+      push: true
+      ref: ${{ github.event.pull_request.head.sha }}
+    permissions:
+      contents: read
+      packages: write
+
+  snapshot:
+    name: Publish Snapshot
+    needs: [version, image]
+    runs-on: ubuntu-26.04
+    permissions:
+      packages: write
+      attestations: write
+      id-token: write
+      pull-requests: write
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-arch snapshot
+        uses: hononeko/actions/publish-image@447f70cc12b6edef1ce53187f14c01c582ed7300 # v1.4.0
+        with:
+          image: ghcr.io/${{ github.repository_owner }}/qbit-gluetun-sync
+          tags: |
+            ${{ needs.version.outputs.snapshot_tag }}
+            pr-${{ github.event.pull_request.number }}
+          expected-digests: "2"
+          title: Snapshot
+          comment-on-pr: ${{ github.event.pull_request.number }}
+          comment-note: For testing only, never for the gitops repository. Deleted when this pull request closes.
