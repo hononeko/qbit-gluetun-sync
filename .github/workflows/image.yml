@@ -56,7 +56,7 @@ jobs:
 
       # With no configuration it can't reach qBittorrent, but the server still answers its liveness probe.
       - name: Smoke test
-        uses: hononeko/actions/smoke-test@447f70cc12b6edef1ce53187f14c01c582ed7300 # v1.4.0
+        uses: hononeko/actions/smoke-test@0367cfc2a81e0f079c9ca2729d2969518d8732b9 # v1.4.1
         with:
           image: smoke:${{ matrix.arch }}
           port: "9090"
