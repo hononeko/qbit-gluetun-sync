@@ -66,7 +66,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Publish multi-arch snapshot
-        uses: hononeko/actions/publish-image@1da1f3206826dd65ca0376413db579e5a12dcade # v1.4.3
+        uses: hononeko/actions/publish-image@e1fdec215f80fc9a1574c61b15303f6789d09b7c # v1.4.7
         with:
           image: ghcr.io/${{ github.repository_owner }}/qbit-gluetun-sync
           tags: |
