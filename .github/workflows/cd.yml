@@ -52,7 +52,7 @@ jobs:
           fetch-depth: 0
 
       - name: Release notes
-        uses: hononeko/actions/release-notes@0db95ecb039dad2e450e9e0d0f18364bb10c2256 # v1.4.8
+        uses: hononeko/actions/release-notes@82e06071aa2d62f9ed1776639e436238cd66666a # v1.6.0
         with:
           previous-tag: ${{ needs.version.outputs.last_tag }}
           tag: ${{ needs.version.outputs.version_tag }}
