@@ -12,20 +12,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version-file: "go.mod"
-          cache: true
+          persist-credentials: false
 
-      - name: Verify go.mod and go.sum are tidy
-        run: go mod tidy -diff
+      - name: Lint workflows and actions
+        uses: hononeko/actions/lint-actions@v1
 
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+      - name: Lint Dockerfile
+        uses: hononeko/actions/lint-docker@v1
+
+      - name: Lint Go
+        uses: hononeko/actions/lint-go@v1
+
+      - name: Run unit tests with coverage
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      # Overall coverage is reported; a pull request's changed lines must be 80% covered.
+      - name: Coverage
+        uses: hononeko/actions/coverage@v1
         with:
-          version: v2.15.0
-
-      - name: Run Unit Tests
-        run: go test -v -race ./...
+          files: coverage.out
+          min-changed-coverage: "80"

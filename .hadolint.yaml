@@ -1,0 +1,4 @@
+# apk packages come from the Alpine base image, which is pinned by digest and kept current by Renovate. Pinning their
+# versions too would break the build whenever Alpine drops an old one.
+ignored:
+  - DL3018

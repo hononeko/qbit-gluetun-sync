@@ -38,6 +38,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ inputs.ref }}
 
       - name: Set up Docker Buildx
@@ -56,7 +57,7 @@ jobs:
 
       # With no configuration it can't reach qBittorrent, but the server still answers its liveness probe.
       - name: Smoke test
-        uses: hononeko/actions/smoke-test@82e06071aa2d62f9ed1776639e436238cd66666a # v1.6.0
+        uses: hononeko/actions/smoke-test@v1
         with:
           image: smoke:${{ matrix.arch }}
           port: "9090"

@@ -26,7 +26,7 @@ jobs:
       packages: write
     steps:
       - name: Prune
-        uses: hononeko/actions/prune-snapshots@82e06071aa2d62f9ed1776639e436238cd66666a # v1.6.0
+        uses: hononeko/actions/prune-snapshots@v1
         with:
           package: qbit-gluetun-sync
           pr-number: ${{ inputs.pr-number || github.event.pull_request.number }}
