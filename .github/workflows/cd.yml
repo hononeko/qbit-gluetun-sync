@@ -33,6 +33,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      actions: read # release-candidate finds the run that publishes the candidate
     env:
       VERSION: ${{ needs.version.outputs.version }}
       VERSION_TAG: ${{ needs.version.outputs.version_tag }}
@@ -69,20 +70,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Main Validation publishes the release candidate; a release dispatched right after a merge waits for its run.
       - name: Find the release candidate
         id: rc
-        run: |
-          if ! docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG" > /dev/null 2>&1; then
-            echo "::error::No release candidate for this commit: $IMAGE:$COMMIT_TAG doesn't exist. Main Validation publishes it; check that its run passed for ${GITHUB_SHA::7}."
-            exit 1
-          fi
-          docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG"
-          digest=$(docker buildx imagetools inspect "$IMAGE:$COMMIT_TAG" --format '{{json .Manifest}}' | jq -r .digest)
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          {
-            echo "### Release $VERSION"
-            echo "Release candidate \`$IMAGE:$COMMIT_TAG\`, digest \`$digest\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+        uses: hononeko/actions/release-candidate@v1
+        with:
+          image: ${{ env.IMAGE }}
+          tag: ${{ env.COMMIT_TAG }}
+          version: ${{ env.VERSION }}
 
       - name: Promote to stable
         env:
