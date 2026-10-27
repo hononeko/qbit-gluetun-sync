@@ -49,10 +49,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Release notes
-        uses: hononeko/actions/release-notes@82e06071aa2d62f9ed1776639e436238cd66666a # v1.6.0
+        uses: hononeko/actions/release-notes@v1
         with:
           previous-tag: ${{ needs.version.outputs.last_tag }}
           tag: ${{ needs.version.outputs.version_tag }}
@@ -123,6 +124,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       # The candidates of this version: its X.Y.Z-rc.N tags, and the commit tags of every commit since the last release.

@@ -5,7 +5,8 @@
     "mergeConfidence:all-badges",
     ":semanticCommits",
     ":semanticCommitTypeAll(chore)",
-    "helpers:pinGitHubActionDigests"
+    "helpers:pinGitHubActionDigests",
+    "github>hononeko/actions//renovate/downstream"
   ],
   "postUpdateOptions": [
     "gomodTidy"
@@ -42,19 +43,6 @@
       "matchPackageNames": ["go", "actions/go-versions"],
       "matchDepNames": ["go", "actions/go-versions"],
       "groupName": "Go",
-      "minimumReleaseAge": "0 days"
-    },
-    {
-      "description": "Internal hononeko/actions: update immediately without release age delay",
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": [
-        "hononeko/actions",
-        "hononeko/actions/**"
-      ],
-      "matchDepNames": [
-        "hononeko/actions",
-        "hononeko/actions/**"
-      ],
       "minimumReleaseAge": "0 days"
     },
     {

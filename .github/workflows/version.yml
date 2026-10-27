@@ -57,11 +57,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
           ref: ${{ inputs.pr-number != '' && github.event.pull_request.head.sha || '' }}
 
       - name: Version
         id: version
-        uses: hononeko/actions/version@82e06071aa2d62f9ed1776639e436238cd66666a # v1.6.0
+        uses: hononeko/actions/version@v1
         with:
           pr-number: ${{ inputs.pr-number }}
