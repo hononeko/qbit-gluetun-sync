@@ -1,12 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
-    "mergeConfidence:all-badges",
-    ":semanticCommits",
-    ":semanticCommitTypeAll(chore)",
-    "helpers:pinGitHubActionDigests",
-    "github>hononeko/actions//renovate/downstream"
+    "github>hononeko/renovate-config",
+    "github>hononeko/renovate-config:hononeko-actions"
   ],
   "postUpdateOptions": [
     "gomodTidy"
