@@ -1,6 +1,6 @@
 module github.com/hononeko/qbit-gluetun-sync
 
-go 1.27.3
+go 1.27.4
 
 require (
 	charm.land/log/v2 v2.0.1
