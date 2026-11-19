@@ -49,8 +49,7 @@ jobs:
         with:
           platforms: linux/${{ matrix.arch }}
           tags: smoke:${{ matrix.arch }}
-          cache-from: type=gha,scope=image-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=image-${{ matrix.arch }}
+          cache-scope: image-${{ matrix.arch }}
 
       # With no configuration it can't reach qBittorrent, but the server still answers its liveness probe.
       - name: Smoke test
@@ -77,5 +76,6 @@ jobs:
           image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           platforms: linux/${{ matrix.arch }}
           push: "true"
-          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          cache-scope: image-${{ matrix.arch }}
+          cache-write: "false"
           digest-artifact: digests-${{ matrix.arch }}
